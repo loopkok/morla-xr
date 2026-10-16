@@ -1,0 +1,66 @@
+# ==================== Unity 生成 / 缓存 ====================
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# ==================== 生成的解决方案 / 工程 ====================
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# ==================== 构建产物 ====================
+*.aab
+*.app
+*.unitypackage
+*.zip
+# 注：MORLA-XR.apk 需要随仓库走，故 *.apk 不忽略
+
+# ==================== Burst ====================
+*[Bb]urstDebugInformation_DoNotShip/
+*.burst.debug
+
+# ==================== Unity / VS 临时 ====================
+.utmp/
+UpgradeLog.htm
+
+# ==================== IDE / OS ====================
+.vs/
+.vsconfig
+.idea/
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*~
+*.swp
+
+# ==================== 杂项 ====================
+sysinfo.txt
+crashlytics-build.properties
+RuntimeActionBindings.json
+
+# ==================== 本机工作副本专属（上游没有） ====================
+Thumbs.db
+desktop.ini
+# 上传到 GitHub 的暂存目录（改为 git 提交后已废弃，文件保留但不再跟踪）
+/change/
+# 构建输出误落到工程根时产生的目录
+/a/
+# 注：MORLA-XR.apk 按项目约定纳入版本库（见上方说明），故 *.apk 不忽略
