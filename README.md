@@ -160,6 +160,16 @@ Assets/Scripts/
 
 ## 更新日志
 
+### 2026-10-20
+
+**可选的 Quest 麦克风上行与主机操作反馈**
+- **动机**：遥操作时操作者不便腾手操作 Web 界面，希望用语音完成「开始跟随 / 开始采集 / 停止采集」等主机侧指令；识别与指令下发全部在主机完成，Quest 只负责采集和反馈展示。
+- **菜单与开关**：Tracking Modes 行新增 **Voice Mic**，默认关闭（`PlayerPrefs` 键 `SavedVoiceMic`，全新安装与已有设备行为一致，均为关）；打开始申请 `RECORD_AUDIO`。仅当开关开启、正在推流且应用在前台时录音，关闭推流 / 关开关 / 切后台 / 失焦会停止麦克风、关闭连接并丢弃待发送音频。
+- **传输**：与位姿链路完全独立，同一主机地址 **TCP 8001**（有线默认 `adb reverse tcp:8001 tcp:8001`）。16 kHz 单声道 signed PCM16 LE，640 样本/帧（40 ms），Base64 后为 `VoicePCM:16000:<base64>`，外层复用 `@q3m <session> <sequence> <capture_monotonic_us>|` 包头（复用 `QuestPacketEnvelope` 的单调时钟握手）。时间戳取实际采集时刻，不把排队音频标成刚采集；发送队列上限 4 帧，超过 200 ms 的帧丢弃。原始音频只用于实时识别，不落盘。
+- **反馈**：主机在同一连接回传单行 UTF-8 JSON（如 `{"type":"feedback","phase":"confirmed","message":"遥操已开始"}`）；HUD 显示网络状态与最近一条结果，`confirmed` 播成功音、其余播提示音。`submitted` 只表示请求已接收，不视为成功。
+- **接线**：`AppManager` 运行时自动挂载 `VoiceAudioStreamer` 并克隆 Toggle，无场景改动；`StatusHud` 追加 Voice 行；manifest 增加 `RECORD_AUDIO` 与 `android.hardware.microphone`（required=false）。
+- **验证边界**：只改源码与文档。提交环境（Ubuntu）没有 Unity Editor，**未编译、未构建 APK、未在 Quest 真机验证麦克风**；仓库内 `MORLA-XR.apk` 仍是 10/16 的 versionCode 7，不含此功能。真机验收步骤见 `docs/VOICE_CONTROL.md`（建议先在主机用 `dry_run:=true` 观察 `/morla/operator/transcripts`）。
+
 ### 2026-10-16
 
 **工程更名为 MORLA-XR，脱离上游、迁入自有仓库**

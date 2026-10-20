@@ -22,6 +22,7 @@ HandLandmarkStreamer.cs    ← 手部：手腕+21关键点，100Hz 阈值事件�
 ControllerPoseStreamer.cs  ← 手柄：6DoF+按键行；IsControllerActive 是 Mixed/IOBT 两套判定的心脏
 BodyPoseStreamer.cs        ← IOBT：31 关节；ToBodyRelative（躯干系重定向）是全链路坐标系核心
 HeadPoseStreamer.cs        ← 头部：跟随帧率
+VoiceAudioStreamer.cs      ← 语音：opt-in 麦克风上行（独立 TCP 8001，16kHz PCM16 / 40ms 帧），主机反馈 JSON → HUD + 提示音
 ControllerMenuPointer.cs   ← 菜单手柄射线指针（自包含 controller→uGUI 桥，不依赖 Interaction SDK rig）
 StatusHud.cs               ← 顶部状态覆盖层（PT/SHAC/Mix/按键行/ray 调试行/IOBT）
 LogManager/LogDisplay*     ← HUD 日志缓存与左右面板
@@ -40,6 +41,8 @@ UIButtonBreather.cs        ← 防连点
 3. **IOBT 坐标系重定向 `_hipsBoneToTorsoFix = (-0.5, 0.5, 0.5, 0.5)` 不许动**：Meta `FullBody_Hips` 骨头局部轴是 +X下/+Y前/+Z左，重定向后才是自然躯干系（+X右/+Y上/+Z前）。手/头/手柄（IOBT 时）与全部非 hips body 关节统一经 `ToBodyRelative` 出躯干系；hips 本身发世界系（作为下游 hips_pose 根）。下游 `unity_pose_to_robot` 轴映射建立在“发出的就是躯干系”之上。
 4. **左右手骨轴约定镜像**：wrist rotation 是 `IHand.GetRootPose`（HandWristRoot），右手 +X指尖/+Y手背/+Z小指→拇指，左手镜像。下游 Wuji 手 retargeting 依赖此约定。
 5. **协议行格式是契约**：载荷仍为 `{Side} wrist:|landmarks:|controller:|buttons:` / `Head pose:` / `body iobt | fid=...:`，逗号后空格、TCP 换行分隔；每行外层使用 `@q3m <session> <sequence> <monotonic_us>|` 包头。接收端 challenge/response 自动估算时钟偏移，无需系统 UTC 对时。下游解析先剥包头再按载荷解析（含 `| f = | t =` debug 头格式），改外层或载荷必须连 `quest3_hand_mocap` 和独立脚本一起改。
+
+   另有一条**独立于位姿链路**的语音流：同一主机地址 **TCP 8001**（有线默认 `adb reverse tcp:8001 tcp:8001`），16 kHz 单声道 signed PCM16 LE、640 样本/帧（40 ms），Base64 后为 `VoicePCM:16000:<base64>`；外层复用 `@q3m ...|`，但时间戳必须用**实际采集时刻**（`QuestPacketEnvelope.WrapCaptured`），不能把排队音频标成刚采集。主机在同一连接回传单行 UTF-8 JSON `{"type":"feedback","phase":"...","message":"..."}`（与时钟握手共用连接），Quest 只显示 HUD/播提示音，不做识别。语音开关默认关（`SavedVoiceMic`），打开始申请 `RECORD_AUDIO`。
 6. **SHAC 与 IOBT 互斥是 Meta 平台限制**：`OVRBody` 检测到 SHAC 会自禁用；菜单两 Toggle 互斥（`_applyingMutex` + `OnMixedChanged/OnIobtChanged`），“手柄+手+身体三者同时”不存在绕过方案，别再尝试。
 7. **`ControllerMenuPointer` 点击判定**：命中用画布自身 `worldCamera` 的 `GraphicRaycaster`（用 `Camera.main` 会瞄 A 点 B，踩过）；松开扳机对**按下时捕获的物体**触发（`pressed == hit` 要求会因射线漂移丢掉大部分点击，踩过）；Button/Toggle 直接 `Invoke` 兜底。射线**线**的显示受 3s 闲置门控，但点击不受——拿起来扣扳机必须能点。
 8. **视频面板尺寸由 FOV 动态推导**（`VideoPanelRenderer`）：改布局参数（`minimized*` 等）别写死像素，Quest FOV 与 PC 端 `size_multiplier` 都在起作用。
