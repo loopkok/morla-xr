@@ -129,7 +129,14 @@ public static class QuestPacketEnvelope
         catch (Exception) { }
     }
 
-    private static string WrapLine(string message)
+    public static string WrapCaptured(string message, long capturedMonotonicUs)
+    {
+        if (capturedMonotonicUs < 0 || message.IndexOf('\n') >= 0 || message.IndexOf('\r') >= 0)
+            throw new ArgumentException("Expected one line with a nonnegative capture timestamp");
+        return WrapLine(message, capturedMonotonicUs);
+    }
+
+    private static string WrapLine(string message, long? capturedMonotonicUs = null)
     {
         int delimiter = message.IndexOf(':');
         string stream = delimiter >= 0 ? message.Substring(0, delimiter) : message;
@@ -144,10 +151,10 @@ public static class QuestPacketEnvelope
             Sequences[stream] = sequence;
         }
         return "@q3m " + Session + " " + sequence.ToString(CultureInfo.InvariantCulture)
-            + " " + MonotonicUs().ToString(CultureInfo.InvariantCulture) + "|" + message;
+            + " " + (capturedMonotonicUs ?? MonotonicUs()).ToString(CultureInfo.InvariantCulture) + "|" + message;
     }
 
-    private static long MonotonicUs()
+    public static long MonotonicUs()
     {
         return (long)(Stopwatch.GetTimestamp() * (1_000_000.0 / Stopwatch.Frequency));
     }

@@ -42,6 +42,8 @@ public class AppManager : MonoBehaviour
     public Toggle iobtToggle;
     public Toggle mixedInputToggle;
     public Toggle refresh90Toggle;
+    public Toggle voiceControlToggle;
+    public bool VoiceControlEnabled => voiceControlToggle != null && voiceControlToggle.isOn;
     public bool MixedInputEnabled => mixedInputToggle == null || mixedInputToggle.isOn;
     public bool WantIobt => iobtToggle == null || iobtToggle.isOn;
     /// <summary>Meta Body API cannot run while SHAC mixed input is on.</summary>
@@ -105,6 +107,8 @@ public class AppManager : MonoBehaviour
             EnsureBodyPoseStreamer();
             EnsureControllerPoseStreamer();
             EnsureControllerMenuPointer();
+            if (FindFirstObjectByType<VoiceAudioStreamer>() == null)
+                new GameObject("VoiceAudioStreamer").AddComponent<VoiceAudioStreamer>();
             // OVRBody auto-enables in Awake and starts body tracking immediately.
             // Disable it here so body tracking only runs when the user actually wants IOBT.
             OVRBody body = FindFirstObjectByType<OVRBody>();
@@ -240,6 +244,11 @@ public class AppManager : MonoBehaviour
         {
             refresh90Toggle = CloneMenuToggle(headPoseToggle, rowGo.transform, "Tgl_90Hz", "90 Hz");
         }
+        if (voiceControlToggle == null)
+            voiceControlToggle = CloneMenuToggle(headPoseToggle, rowGo.transform, "Tgl_Voice", "Voice Mic");
+        voiceControlToggle.isOn = PlayerPrefs.GetInt("SavedVoiceMic", 0) == 1;
+        voiceControlToggle.onValueChanged.RemoveListener(OnVoiceChanged);
+        voiceControlToggle.onValueChanged.AddListener(OnVoiceChanged);
 
         _applyingMutex = true;
         mixedInputToggle.isOn = PlayerPrefs.GetInt("SavedMixed", 0) == 1;
@@ -320,6 +329,12 @@ public class AppManager : MonoBehaviour
     {
         ApplyRefreshRate();
         PlayerPrefs.SetInt("Saved90Hz", on ? 1 : 0);
+        PlayerPrefs.Save();
+    }
+
+    private void OnVoiceChanged(bool on)
+    {
+        PlayerPrefs.SetInt("SavedVoiceMic", on ? 1 : 0);
         PlayerPrefs.Save();
     }
 

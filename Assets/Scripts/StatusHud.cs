@@ -122,6 +122,7 @@ public class StatusHud : MonoBehaviour
             _sb.Append(ctrlRest).Append('\n');
         }
         _sb.Append(BodyPoseStreamer.HudLine);
+        _sb.Append('\n').Append(VoiceAudioStreamer.HudLine);
         _text.text = _sb.ToString();
     }
 
