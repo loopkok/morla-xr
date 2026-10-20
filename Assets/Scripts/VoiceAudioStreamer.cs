@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Concurrent;
-using System.Diagnostics;
+using Stopwatch = System.Diagnostics.Stopwatch;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
