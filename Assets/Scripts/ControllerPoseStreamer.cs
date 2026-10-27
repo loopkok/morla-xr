@@ -25,12 +25,7 @@ public class ControllerPoseStreamer : MonoBehaviour
     [SerializeField] private string hudLogSource = "Left";
 
     private HandLandmarkStreamer[] _handStreamers;
-    private UdpClient _udpClient;
-    private TcpClient _tcpClient;
-    private NetworkStream _tcpStream;
-    private IPEndPoint _remoteEndPoint;
     private bool _isInitialized;
-    private int _currentProtocol = -1;
     private float _timer;
     private string _lastMix = "";
 
@@ -46,7 +41,7 @@ public class ControllerPoseStreamer : MonoBehaviour
     private void Update()
     {
         // Button HUD runs in menu and streaming so the operator can see presses.
-        BuildButtonHud();
+        if (AppManager.Instance != null && AppManager.Instance.ShowDiagnostics) BuildButtonHud();
 
         if (AppManager.Instance == null || !AppManager.Instance.isStreaming)
         {
@@ -54,7 +49,8 @@ public class ControllerPoseStreamer : MonoBehaviour
             {
                 Disconnect();
             }
-            HudLine = "Mix (menu — start stream)";
+            if (!AppManager.Instance.ShowDiagnostics) return;
+            HudLine = "Mix (local tracking — not sending)";
             // In the menu, still pin the controller pose + button state to the
             // world-space panels so the operator can see presses while clicking.
             PinMenuController("Left", OVRInput.Controller.LTouch, OVRInput.Hand.HandLeft, HandLandmarkStreamer.HandSide.Left);
@@ -89,6 +85,7 @@ public class ControllerPoseStreamer : MonoBehaviour
         bool leftHand = sendLeft && !leftCtrl && IsHandTracked(HandLandmarkStreamer.HandSide.Left);
         bool rightHand = sendRight && !rightCtrl && IsHandTracked(HandLandmarkStreamer.HandSide.Right);
 
+        if (!AppManager.Instance.ShowDiagnostics) return;
         string mix = $"L={(leftCtrl ? "ctrl" : leftHand ? "hand" : "none")} R={(rightCtrl ? "ctrl" : rightHand ? "hand" : "none")}";
         _sbLog.Clear();
         _sbLog.Append("Mix ").AppendLine(mix);
@@ -261,24 +258,8 @@ public class ControllerPoseStreamer : MonoBehaviour
     private bool IsControllerActive(
         OVRInput.Controller controller, OVRInput.Hand hand, HandLandmarkStreamer.HandSide side, bool mixed)
     {
-        bool streaming = AppManager.Instance != null && AppManager.Instance.isStreaming;
-        bool shacActive = streaming && mixed;
-        if (shacActive)
-        {
-            // Mixed (SHAC): stream the controller only while it's actually held in hand.
-            return OVRInput.GetControllerIsInHandState(hand) == OVRInput.ControllerInHandState.ControllerInHand
-                && OVRInput.GetControllerPositionValid(controller);
-        }
-        if (!streaming)
-        {
-            // Menu: SHAC is off and hand tracking stays ON while holding the controller,
-            // so the "hand off" proxy below never fires. Just use controller pose validity
-            // so the menu ray + button HUD work while the controller is on.
-            return OVRInput.GetControllerPositionValid(controller);
-        }
-        // IOBT streaming: pressing a button wakes the controller and the runtime switches
-        // hand tracking OFF, so "hand no longer tracked + pose valid" means it's active.
-        return !IsHandTracked(side) && OVRInput.GetControllerPositionValid(controller);
+        if (AppManager.Instance == null || AppManager.Instance.Tracking == null) return false;
+        return AppManager.Instance.Tracking.ControllerActive(side == HandLandmarkStreamer.HandSide.Left);
     }
 
     private void BuildButtonHud()
@@ -350,98 +331,25 @@ public class ControllerPoseStreamer : MonoBehaviour
         return false;
     }
 
+    private TelemetryChannel _channel;
     private void InitializeNetwork()
     {
-        if (AppManager.Instance == null)
-        {
-            return;
-        }
-
-        string ip = AppManager.Instance.ServerIP;
-        int port = AppManager.Instance.ServerPort;
-        _currentProtocol = AppManager.Instance.SelectedProtocol;
-
-        try
-        {
-            if (_currentProtocol == 0)
-            {
-                _udpClient = new UdpClient();
-                _udpClient.Client.SendBufferSize = 0;
-                _remoteEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
-                _udpClient.BeginReceive(new AsyncCallback(OnUdpReceive), null);
-                LogHUD($"Ctrl UDP Ready: {ip}:{port}");
-            }
-            else
-            {
-                _tcpClient = new TcpClient(AddressFamily.InterNetwork);
-                _tcpClient.NoDelay = true;
-                _tcpClient.SendTimeout = 1000;
-                _tcpClient.Connect(ip, port);
-                _tcpStream = _tcpClient.GetStream();
-                QuestPacketEnvelope.StartTcpSyncListener(_tcpStream);
-                string type = _currentProtocol == 1 ? "Wired" : "WiFi";
-                LogHUD($"Ctrl TCP({type}) Connected: {ip}:{port}");
-            }
-            _isInitialized = true;
-        }
-        catch (Exception ex)
-        {
-            LogHUD($"Ctrl Conn Error: {ex.Message}");
-            if (AppManager.Instance != null)
-            {
-                AppManager.Instance.StopStreaming();
-            }
-        }
+        if (_channel != null) return;
+        _channel = AppManager.Instance.CreateChannel("controller");
+        _isInitialized = true;
     }
-
-    private void OnUdpReceive(IAsyncResult res)
-    {
-        QuestPacketEnvelope.ContinueUdpSyncReceive(
-            _udpClient, res, new AsyncCallback(OnUdpReceive));
-    }
-
     private void SendData(string message)
     {
-        if (AppManager.Instance != null && !AppManager.Instance.isStreaming)
-        {
-            return;
-        }
-        message = QuestPacketEnvelope.Wrap(message);
-
-        try
-        {
-            if (_currentProtocol == 0 && _udpClient != null)
-            {
-                byte[] data = Encoding.UTF8.GetBytes(message);
-                _udpClient.Send(data, data.Length, _remoteEndPoint);
-            }
-            else if ((_currentProtocol == 1 || _currentProtocol == 2) && _tcpStream != null && _tcpStream.CanWrite)
-            {
-                byte[] data = Encoding.UTF8.GetBytes(message + "\n");
-                QuestPacketEnvelope.WriteTcp(_tcpStream, data);
-            }
-        }
-        catch (Exception)
-        {
-            Disconnect();
-            if (AppManager.Instance != null)
-            {
-                AppManager.Instance.HandleDisconnection("Host Closed Connection (controller)");
-            }
-        }
+        if (AppManager.Instance == null || !AppManager.Instance.isStreaming || string.IsNullOrWhiteSpace(message)) return;
+        if (!_isInitialized) InitializeNetwork();
+        _channel?.Submit(message);
     }
-
+    public void CloseTransport() => Disconnect();
     private void Disconnect()
     {
-        try
-        {
-            if (_udpClient != null) { _udpClient.Close(); _udpClient = null; }
-            if (_tcpStream != null) { _tcpStream.Close(); _tcpStream = null; }
-            if (_tcpClient != null) { _tcpClient.Close(); _tcpClient = null; }
-        }
-        catch { }
-        _isInitialized = false;
+        _channel?.Dispose(); _channel = null; _isInitialized = false;
     }
+
 
     private static void AppendVector3(StringBuilder sb, Vector3 vec)
     {
@@ -460,7 +368,7 @@ public class ControllerPoseStreamer : MonoBehaviour
 
     private void LogHUD(string msg)
     {
-        if (logToHUD && LogManager.Instance != null)
+        if (logToHUD && AppManager.Instance != null && AppManager.Instance.ShowDiagnostics && LogManager.Instance != null)
         {
             LogManager.Instance.Log(hudLogSource, msg);
         }

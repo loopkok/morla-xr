@@ -136,8 +136,10 @@ public class QuestVideoReceiver : MonoBehaviour
             yield break;
         }
 
-        var op = _peer.CreateOffer();
+        var peer = _peer;
+        var op = peer.CreateOffer();
         yield return op;
+        if (_peer != peer) { tcs.TrySetResult(false); yield break; }
         if (op.IsError)
         {
             OnError?.Invoke($"CreateOffer failed: {op.Error.message}");
@@ -146,8 +148,9 @@ public class QuestVideoReceiver : MonoBehaviour
         }
 
         var desc = op.Desc;
-        var setLocal = _peer.SetLocalDescription(ref desc);
+        var setLocal = peer.SetLocalDescription(ref desc);
         yield return setLocal;
+        if (_peer != peer) { tcs.TrySetResult(false); yield break; }
         if (setLocal.IsError)
         {
             OnError?.Invoke($"SetLocalDescription failed: {setLocal.Error.message}");
@@ -172,8 +175,10 @@ public class QuestVideoReceiver : MonoBehaviour
             type = RTCSdpType.Answer,
             sdp = sdp,
         };
-        var op = _peer.SetRemoteDescription(ref desc);
+        var peer = _peer;
+        var op = peer.SetRemoteDescription(ref desc);
         yield return op;
+        if (_peer != peer) { tcs.TrySetResult(false); yield break; }
         if (op.IsError)
         {
             OnError?.Invoke($"SetRemoteDescription failed: {op.Error.message}");

@@ -11,6 +11,8 @@
 
 # ==================== 生成的解决方案 / 工程 ====================
 *.csproj
+!Tools/Validation/Morla.Validation.csproj
+Tools/Validation/bin/
 *.unityproj
 *.sln
 *.suo

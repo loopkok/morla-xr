@@ -33,12 +33,7 @@ public class HandLandmarkStreamer : MonoBehaviour
     public HandSide Side => _handSide;
     
     // Networking
-    private UdpClient _udpClient;
-    private TcpClient _tcpClient;
-    private NetworkStream _tcpStream;
-    private IPEndPoint _remoteEndPoint;
     private bool _isInitialized = false;
-    private int _currentProtocol = -1; 
 
     // Optimization: Cache StringBuilders
     private StringBuilder _sbPacket = new StringBuilder(2048);
@@ -86,7 +81,10 @@ public class HandLandmarkStreamer : MonoBehaviour
 
     private void OnHandUpdated()
     {
-        // 1. Check AppManager State
+        var app = AppManager.Instance;
+        if (app != null && app.TrackingEnabled && _hand != null && !AppManager.IsTouchPoseValid(_handSide))
+            app.Status.sources[_handSide == HandSide.Left ? "left" : "right"].Observe("手部", _hand.IsTrackedDataValid && _hand.GetRootPose(out _));
+        // Sampling above remains active without a network session.
         if (AppManager.Instance == null || !AppManager.Instance.isStreaming)
         {
             if (_isInitialized) Disconnect();
@@ -162,7 +160,7 @@ public class HandLandmarkStreamer : MonoBehaviour
             AppendQuaternion(_sbPacket, rootPose.rotation);
 
             // Prepare HUD Log
-            if (_logToHUD)
+            if (_logToHUD && AppManager.Instance.ShowDiagnostics)
             {
                 _sbLog.AppendLine($"=== [{_handSide}] Wrist ===");
                 _sbLog.AppendLine($"Pos: {rootPose.position.ToString("F3")}");
@@ -198,7 +196,7 @@ public class HandLandmarkStreamer : MonoBehaviour
             }
 
             // HUD Log
-            if (_logToHUD)
+            if (_logToHUD && AppManager.Instance.ShowDiagnostics)
             {
                 _sbLog.AppendLine($"=== [{_handSide}] Landmarks ===");
                 for (int i = 0; i < _displayJoints.Length; i++)
@@ -221,90 +219,25 @@ public class HandLandmarkStreamer : MonoBehaviour
     }
 
     // --- NETWORK HELPERS ---
+    private TelemetryChannel _channel;
     private void InitializeNetwork()
     {
-        string ip = AppManager.Instance.ServerIP;
-        int port = AppManager.Instance.ServerPort;
-        _currentProtocol = AppManager.Instance.SelectedProtocol;
-
-        try
-        {
-            if (_currentProtocol == 0) // UDP
-            {
-                _udpClient = new UdpClient();
-                _udpClient.Client.SendBufferSize = 0;
-                _remoteEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
-                
-                _udpClient.BeginReceive(new AsyncCallback(OnUdpReceive), null);
-                LogHUD($"UDP Ready: {ip}:{port}");
-            }
-            else // TCP (Wired=1 OR Wireless=2)
-            {
-                _tcpClient = new TcpClient(AddressFamily.InterNetwork);
-                _tcpClient.NoDelay = true; 
-                _tcpClient.SendTimeout = 1000;
-
-                _tcpClient.Connect(ip, port);
-                _tcpStream = _tcpClient.GetStream();
-                QuestPacketEnvelope.StartTcpSyncListener(_tcpStream);
-                
-                string type = _currentProtocol == 1 ? "Wired" : "WiFi";
-                LogHUD($"TCP({type}) Connected: {ip}:{port}");
-            }
-            _isInitialized = true;
-        }
-        catch (Exception ex)
-        {
-            LogHUD($"Conn Error: {ex.Message}");
-            AppManager.Instance.StopStreaming();
-        }
+        if (_channel != null) return;
+        _channel = AppManager.Instance.CreateChannel(_handSide == HandSide.Left ? "left" : "right");
+        _isInitialized = true;
     }
-
-    private void OnUdpReceive(IAsyncResult res)
-    {
-        QuestPacketEnvelope.ContinueUdpSyncReceive(
-            _udpClient, res, new AsyncCallback(OnUdpReceive));
-    }
-    
     private void SendData(string message)
     {
-        if (AppManager.Instance != null && !AppManager.Instance.isStreaming) return;
-        message = QuestPacketEnvelope.Wrap(message);
-
-        try
-        {
-            if (_currentProtocol == 0 && _udpClient != null) // UDP
-            {
-                byte[] data = Encoding.UTF8.GetBytes(message);
-                _udpClient.Send(data, data.Length, _remoteEndPoint);
-            }
-            else if ((_currentProtocol == 1 || _currentProtocol == 2) && _tcpStream != null && _tcpStream.CanWrite)
-            {
-                byte[] data = Encoding.UTF8.GetBytes(message + "\n");
-                QuestPacketEnvelope.WriteTcp(_tcpStream, data);
-            }
-        }
-        catch (Exception ex)
-        {
-            Disconnect();
-            if (AppManager.Instance != null)
-            {
-                AppManager.Instance.HandleDisconnection("Host Closed Connection:" + ex.Message);
-            }
-        }
+        if (AppManager.Instance == null || !AppManager.Instance.isStreaming || string.IsNullOrWhiteSpace(message)) return;
+        if (!_isInitialized) InitializeNetwork();
+        _channel?.Submit(message);
     }
-
+    public void CloseTransport() => Disconnect();
     private void Disconnect()
     {
-        try
-        {
-            if (_udpClient != null) { _udpClient.Close(); _udpClient = null; }
-            if (_tcpStream != null) { _tcpStream.Close(); _tcpStream = null; }
-            if (_tcpClient != null) { _tcpClient.Close(); _tcpClient = null; }
-        }
-        catch { }
-        _isInitialized = false;
+        _channel?.Dispose(); _channel = null; _isInitialized = false;
     }
+
 
     // --- UTILITY HELPERS ---
     private static ulong GetMonotonicTimestampNs()
@@ -362,7 +295,7 @@ public class HandLandmarkStreamer : MonoBehaviour
 
     private void LogHUD(string msg)
     {
-        if (_logToHUD && LogManager.Instance != null)
+        if (_logToHUD && AppManager.Instance != null && AppManager.Instance.ShowDiagnostics && LogManager.Instance != null)
         {
             LogManager.Instance.Log(_hudLogSource, msg);
         }

@@ -66,6 +66,9 @@ public class BodyPoseStreamer : MonoBehaviour
     /// frame (+X right, +Y up, +Z forward), not the raw FullBody_Hips bone frame
     /// (whose local axes are +X down, +Y forward, +Z left).</summary>
     private static Pose? _lastBodyReferencePose;
+    private static long _referenceUs;
+    public static void ResetReference() { _lastBodyReferencePose = null; _referenceUs = 0; }
+    public static bool ReferenceFresh => _lastBodyReferencePose.HasValue && QuestPacketEnvelope.MonotonicUs() - _referenceUs < 250000;
 
     /// <summary>Constant local rotation that re-axes the FullBody_Hips bone frame
     /// into a natural torso frame (+X right, +Y up, +Z forward). Derived from the
@@ -73,12 +76,7 @@ public class BodyPoseStreamer : MonoBehaviour
     /// R_fix = R_bone_default^-1 (the conjugate of the bone's default quaternion).
     /// Quaternion (x,y,z,w) = (-0.5, 0.5, 0.5, 0.5).</summary>
     private static readonly Quaternion _hipsBoneToTorsoFix = new Quaternion(-0.5f, 0.5f, 0.5f, 0.5f);
-    private UdpClient _udpClient;
-    private TcpClient _tcpClient;
-    private NetworkStream _tcpStream;
-    private IPEndPoint _remoteEndPoint;
     private bool _isInitialized;
-    private int _currentProtocol = -1;
     private float _timer;
     private string _lastFidelityLogged = "";
     private GameObject[] _debugSpheres;
@@ -88,7 +86,7 @@ public class BodyPoseStreamer : MonoBehaviour
     /// <summary>Returns the latest hips pose (world space) to use as the body reference frame.</summary>
     public static bool TryGetBodyReferencePose(out Pose hipsPose)
     {
-        if (_lastBodyReferencePose.HasValue)
+        if (ReferenceFresh)
         {
             hipsPose = _lastBodyReferencePose.Value;
             return true;
@@ -101,7 +99,7 @@ public class BodyPoseStreamer : MonoBehaviour
     /// Returns the pose unchanged when no body reference is available yet.</summary>
     public static Pose ToBodyRelative(Pose worldPose)
     {
-        if (!_lastBodyReferencePose.HasValue)
+        if (!ReferenceFresh)
         {
             return worldPose;
         }
@@ -125,61 +123,22 @@ public class BodyPoseStreamer : MonoBehaviour
 
     private void Update()
     {
-        if (AppManager.Instance == null || !AppManager.Instance.isStreaming || !AppManager.Instance.TrackIobt)
+        var app = AppManager.Instance;
+        if (app == null || !app.TrackingEnabled || !app.TrackIobt)
         {
-            if (_isInitialized)
-            {
-                Disconnect();
-            }
-            // Stop OVRBody from running body tracking when we don't need it.
-            if (_ovrBody != null && _ovrBody.enabled)
-            {
-                _ovrBody.enabled = false;
-            }
+            Disconnect(); ResetReference();
+            if (_ovrBody != null) _ovrBody.enabled = false;
             HideUnusedDebugSpheres(0);
-            if (AppManager.Instance == null || !AppManager.Instance.isStreaming)
-            {
-                HudLine = AppManager.Instance != null && AppManager.Instance.MixedInputEnabled
-                    ? "=== [IOBT] Body ===\nidle (Mixed on — body blocked until Mixed is off)"
-                    : "=== [IOBT] Body ===\nidle (start stream)";
-            }
-            else if (AppManager.Instance.MixedInputEnabled)
-            {
-                HudLine = "=== [IOBT] Body ===\nblocked (Mixed/SHAC on — Meta cannot run both)";
-            }
-            else if (!AppManager.Instance.WantIobt)
-            {
-                HudLine = "=== [IOBT] Body ===\noff (toggle)";
-            }
-            else
-            {
-                HudLine = "=== [IOBT] Body ===\nwaiting";
-            }
-            PinIobt(HudLine);
+            if (app != null) app.Status.sources["body"].Observe("身体", false);
             return;
         }
-
-        // Body tracking and hand tracking are mutually exclusive. Only start body
-        // tracking once we're actually streaming IOBT (never at the menu, where hand
-        // tracking drives the UI).
         if (!EnsureBodyTrackingActive())
         {
-            HudLine = "=== [IOBT] Body ===\nwaiting for body tracking permission...";
-            PinIobt(HudLine);
-            return;
+            ResetReference(); app.Status.sources["body"].Observe("身体", false, "等待身体权限"); return;
         }
-
-        if (!_isInitialized)
-        {
-            InitializeNetwork();
-        }
-
         _timer += Time.deltaTime;
-        if (_timer < frequencySeconds)
-        {
-            return;
-        }
-        _timer = 0f;
+        if (_timer < frequencySeconds) return;
+        _timer = 0f; // Preserve the existing source cadence in this UI migration.
         BuildAndSendPacket();
     }
 
@@ -211,6 +170,7 @@ public class BodyPoseStreamer : MonoBehaviour
 
         if (!OVRPermissionsRequester.IsPermissionGranted(OVRPermissionsRequester.Permission.BodyTracking))
         {
+            if (AppManager.Instance.Workspace != null && AppManager.Instance.Workspace.OnboardingVisible) return false;
             if (!_permissionRequested)
             {
                 _permissionRequested = true;
@@ -252,13 +212,22 @@ public class BodyPoseStreamer : MonoBehaviour
         }
         if (!_ovrBody.BodyState.HasValue)
         {
+            ResetReference();
+            AppManager.Instance.Status.sources["body"].Observe("身体", false);
             HudLine = "=== [IOBT] Body ===\nno BodyState (permission / tracking not ready)";
             PinIobt(HudLine);
             return;
         }
 
         OVRPlugin.BodyState state = _ovrBody.BodyState.Value;
+        int hipsIndex = (int)OVRPlugin.BoneId.FullBody_Hips;
+        if (state.JointLocations == null || state.JointLocations.Length <= hipsIndex ||
+            !state.JointLocations[hipsIndex].PositionValid || !state.JointLocations[hipsIndex].OrientationValid || state.Confidence <= 0)
+        {
+            ResetReference(); AppManager.Instance.Status.sources["body"].Observe("身体", false); return;
+        }
         string fidelity = state.Fidelity.ToString();
+        AppManager.Instance.Status.sources["body"].Observe("身体", true, fidelity);
         if (fidelity != _lastFidelityLogged)
         {
             _lastFidelityLogged = fidelity;
@@ -270,6 +239,14 @@ public class BodyPoseStreamer : MonoBehaviour
         }
 
         Camera cam = Camera.main;
+        // Refresh the reference locally even when no transport or diagnostics are enabled.
+        var hipsLocation = state.JointLocations[hipsIndex];
+        var reference = new OVRPose { position = hipsLocation.Pose.Position.FromFlippedZVector3f(), orientation = hipsLocation.Pose.Orientation.FromFlippedZQuatf() };
+        if (cam != null) reference = reference.ToWorldSpacePose(cam);
+        _lastBodyReferencePose = new Pose(reference.position, reference.orientation * _hipsBoneToTorsoFix);
+        _referenceUs = QuestPacketEnvelope.MonotonicUs();
+        if (!AppManager.Instance.isStreaming && !AppManager.Instance.ShowDiagnostics && !AppManager.Instance.ShowLandmarks)
+        { HideUnusedDebugSpheres(0); return; }
         _sbPacket.Clear();
         _sbPacket.Append("body iobt | fid=").Append(fidelity).Append(':');
 
@@ -321,6 +298,7 @@ public class BodyPoseStreamer : MonoBehaviour
                 hipsRot = torsoRot;
                 hasHips = true;
                 _lastBodyReferencePose = new Pose(hipsPos, hipsRot);
+                _referenceUs = QuestPacketEnvelope.MonotonicUs();
                 AppendVector3(_sbPacket, pos);
                 _sbPacket.Append(',');
                 AppendQuaternion(_sbPacket, torsoRot);
@@ -338,7 +316,7 @@ public class BodyPoseStreamer : MonoBehaviour
                 else if (StreamedJoints[i].name == "right-shoulder") { rShoulderPos = pos; hasRShoulder = true; }
             }
 
-            if (drawDebugSkeleton)
+            if (drawDebugSkeleton && AppManager.Instance.ShowLandmarks)
             {
                 UpdateDebugSphere(drawn, pos, StreamedJoints[i].name);
                 drawn++;
@@ -347,31 +325,34 @@ public class BodyPoseStreamer : MonoBehaviour
 
         HideUnusedDebugSpheres(drawn);
 
-        _sbLog.Clear();
-        _sbLog.AppendLine("=== [IOBT] Body ===");
-        _sbLog.Append("fid=").Append(fidelity);
-        _sbLog.Append(" conf=").Append(state.Confidence.ToString("F2"));
-        _sbLog.Append(" joints=").Append(drawn).Append('/').Append(StreamedJoints.Length).AppendLine();
-        if (hasHips)
+        if (AppManager.Instance.ShowDiagnostics)
         {
-            _sbLog.Append("Hips Pos: ").AppendLine($"({hipsPos.x:F3}, {hipsPos.y:F3}, {hipsPos.z:F3})");
-            _sbLog.Append("Hips Rot: ").AppendLine($"({hipsRot.x:F3}, {hipsRot.y:F3}, {hipsRot.z:F3}, {hipsRot.w:F3})");
-        }
-        if (hasChest)
-        {
-            _sbLog.Append("Chest Pos: ").AppendLine($"({chestPos.x:F3}, {chestPos.y:F3}, {chestPos.z:F3})");
-        }
-        if (hasLShoulder)
-        {
-            _sbLog.Append("LShoulder: ").AppendLine($"({lShoulderPos.x:F3}, {lShoulderPos.y:F3}, {lShoulderPos.z:F3})");
-        }
-        if (hasRShoulder)
-        {
-            _sbLog.Append("RShoulder: ").Append($"({rShoulderPos.x:F3}, {rShoulderPos.y:F3}, {rShoulderPos.z:F3})");
-        }
-        HudLine = _sbLog.ToString();
-        PinIobt(HudLine);
+            _sbLog.Clear();
+            _sbLog.AppendLine("=== [IOBT] Body ===");
+            _sbLog.Append("fid=").Append(fidelity);
+            _sbLog.Append(" conf=").Append(state.Confidence.ToString("F2"));
+            _sbLog.Append(" joints=").Append(drawn).Append('/').Append(StreamedJoints.Length).AppendLine();
+            if (hasHips)
+            {
+                _sbLog.Append("Hips Pos: ").AppendLine($"({hipsPos.x:F3}, {hipsPos.y:F3}, {hipsPos.z:F3})");
+                _sbLog.Append("Hips Rot: ").AppendLine($"({hipsRot.x:F3}, {hipsRot.y:F3}, {hipsRot.z:F3}, {hipsRot.w:F3})");
+            }
+            if (hasChest)
+            {
+                _sbLog.Append("Chest Pos: ").AppendLine($"({chestPos.x:F3}, {chestPos.y:F3}, {chestPos.z:F3})");
+            }
+            if (hasLShoulder)
+            {
+                _sbLog.Append("LShoulder: ").AppendLine($"({lShoulderPos.x:F3}, {lShoulderPos.y:F3}, {lShoulderPos.z:F3})");
+            }
+            if (hasRShoulder)
+            {
+                _sbLog.Append("RShoulder: ").Append($"({rShoulderPos.x:F3}, {rShoulderPos.y:F3}, {rShoulderPos.z:F3})");
+            }
+            HudLine = _sbLog.ToString();
+            PinIobt(HudLine);
 
+        }
         SendData(_sbPacket.ToString());
     }
 
@@ -419,85 +400,25 @@ public class BodyPoseStreamer : MonoBehaviour
         }
     }
 
+    private TelemetryChannel _channel;
     private void InitializeNetwork()
     {
-        string ip = AppManager.Instance.ServerIP;
-        int port = AppManager.Instance.ServerPort;
-        _currentProtocol = AppManager.Instance.SelectedProtocol;
-        try
-        {
-            if (_currentProtocol == 0)
-            {
-                _udpClient = new UdpClient();
-                _udpClient.Client.SendBufferSize = 0;
-                _remoteEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
-                _udpClient.BeginReceive(new AsyncCallback(OnUdpReceive), null);
-                LogHUD($"Body UDP Ready: {ip}:{port}");
-            }
-            else
-            {
-                _tcpClient = new TcpClient(AddressFamily.InterNetwork);
-                _tcpClient.NoDelay = true;
-                _tcpClient.SendTimeout = 1000;
-                _tcpClient.Connect(ip, port);
-                _tcpStream = _tcpClient.GetStream();
-                QuestPacketEnvelope.StartTcpSyncListener(_tcpStream);
-                string type = _currentProtocol == 1 ? "Wired" : "WiFi";
-                LogHUD($"Body TCP({type}) Connected: {ip}:{port}");
-            }
-            _isInitialized = true;
-        }
-        catch (Exception ex)
-        {
-            LogHUD($"Body Conn Error: {ex.Message}");
-            AppManager.Instance.StopStreaming();
-        }
+        if (_channel != null) return;
+        _channel = AppManager.Instance.CreateChannel("body");
+        _isInitialized = true;
     }
-
-    private void OnUdpReceive(IAsyncResult res)
-    {
-        QuestPacketEnvelope.ContinueUdpSyncReceive(
-            _udpClient, res, new AsyncCallback(OnUdpReceive));
-    }
-
     private void SendData(string message)
     {
-        if (AppManager.Instance != null && !AppManager.Instance.isStreaming) return;
-        message = QuestPacketEnvelope.Wrap(message);
-        try
-        {
-            if (_currentProtocol == 0 && _udpClient != null)
-            {
-                byte[] data = Encoding.UTF8.GetBytes(message);
-                _udpClient.Send(data, data.Length, _remoteEndPoint);
-            }
-            else if ((_currentProtocol == 1 || _currentProtocol == 2) && _tcpStream != null && _tcpStream.CanWrite)
-            {
-                byte[] data = Encoding.UTF8.GetBytes(message + "\n");
-                QuestPacketEnvelope.WriteTcp(_tcpStream, data);
-            }
-        }
-        catch (Exception)
-        {
-            Disconnect();
-            if (AppManager.Instance != null)
-            {
-                AppManager.Instance.HandleDisconnection("Host Closed Connection (body)");
-            }
-        }
+        if (AppManager.Instance == null || !AppManager.Instance.isStreaming || string.IsNullOrWhiteSpace(message)) return;
+        if (!_isInitialized) InitializeNetwork();
+        _channel?.Submit(message);
     }
-
+    public void CloseTransport() => Disconnect();
     private void Disconnect()
     {
-        try
-        {
-            if (_udpClient != null) { _udpClient.Close(); _udpClient = null; }
-            if (_tcpStream != null) { _tcpStream.Close(); _tcpStream = null; }
-            if (_tcpClient != null) { _tcpClient.Close(); _tcpClient = null; }
-        }
-        catch { }
-        _isInitialized = false;
+        _channel?.Dispose(); _channel = null; _isInitialized = false;
     }
+
 
     private static void AppendVector3(StringBuilder sb, Vector3 vec)
     {
@@ -512,7 +433,7 @@ public class BodyPoseStreamer : MonoBehaviour
 
     private void PinIobt(string block)
     {
-        if (LogManager.Instance == null)
+        if (AppManager.Instance == null || !AppManager.Instance.ShowDiagnostics || LogManager.Instance == null)
         {
             return;
         }
@@ -522,7 +443,7 @@ public class BodyPoseStreamer : MonoBehaviour
 
     private void LogHUD(string msg)
     {
-        if (logToHUD && LogManager.Instance != null)
+        if (logToHUD && AppManager.Instance != null && AppManager.Instance.ShowDiagnostics && LogManager.Instance != null)
         {
             LogManager.Instance.Log(hudLogSource, msg);
         }

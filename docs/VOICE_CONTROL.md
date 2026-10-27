@@ -1,8 +1,10 @@
 # Quest 语音控制（配合 MORLA 主机）
 
-使用 Unity **6000.0.65f1** 在 Windows 编译 Android/ARM64 APK。本改动没有修改场景、手部/身体/手柄追踪发送格式或原有 8000 / 8765 端口。`AppManager` 自动添加 `VoiceAudioStreamer`，不需要手工给场景挂组件。
+使用 Unity **6000.0.65f1** 在 Windows 编译 Android/ARM64 APK。1.1 工作区改版保留原有追踪/语音载荷及默认 8000 / 8765 端口，`AppManager` 初始化工作区与 `VoiceAudioStreamer`，不需要手工给场景挂组件。
 
-菜单的 Tracking Modes 行新增 **Voice Mic**，默认关闭。打开并 Start Stream 后申请 Android `RECORD_AUDIO` 权限；仅当开关开启、应用推流且在前台时录音。关闭推流、关闭开关、切到后台或失去焦点会停止麦克风、关闭连接、丢弃待发送音频。
+1.1 版本在工具栏和“设置 → 语音”提供麦克风上行，默认关闭；首次开启申请 Android `RECORD_AUDIO`。语音会话独立于位姿发送，可在主机可用时单独开启。进入设置交互、关闭麦克风、断开主机、切后台或失焦时立即结束录音、关闭连接并丢弃待发音频；关闭设置不自动恢复录音。工具栏中的录音指示来自实际采集状态。
+
+原有 `SavedVoiceMic` 偏好迁移到版本化配置；语音地址默认跟随位姿主机，可在连接设置中单独配置。HUD 多行诊断已改为设置内的语音状态与最近结果，便携检查和 Windows 构建步骤见 [工作区实现说明](WORKSPACE_IMPLEMENTATION.md)。
 
 Ubuntu 主机先启动机器人 Profile 和新的语音输入节点：
 

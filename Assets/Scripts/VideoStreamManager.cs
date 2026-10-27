@@ -46,6 +46,21 @@ public class VideoStreamManager : MonoBehaviour
     private bool _offerStarted;
 
     public SessionState CurrentState => _state;
+    private int _generation, _selectedTrack;
+    private bool _visible = true;
+    private long _lastPrimaryFrame, _frameWindowStart;
+    private int _frameWindowCount;
+    private float _receiveFps;
+    public float ReceiveFps => LastFrameAgeSeconds >= 0 && LastFrameAgeSeconds < 0.75 ? _receiveFps : 0;
+    private float _startedAt;
+    private string _layoutKey = "";
+    private Transform _worldAnchor;
+    private bool _visibilityReceived;
+    private readonly HashSet<string> _enabledTracks = new HashSet<string>();
+    private readonly Dictionary<int, long> _frameTimes = new Dictionary<int, long>();
+    public string[] TrackLabels => _tracks.ConvertAll(t => t.label).ToArray();
+    public void SelectPrimaryTrack(int index) { if (index < 0 || index >= _tracks.Count) return; _selectedTrack = index; _layoutKey = ""; }
+    public double LastFrameAgeSeconds => _lastPrimaryFrame == 0 ? -1 : (QuestPacketEnvelope.MonotonicUs() - _lastPrimaryFrame) / 1000000.0;
 
     private class TrackSpec
     {
@@ -60,8 +75,11 @@ public class VideoStreamManager : MonoBehaviour
 
     public void SetVideoUiVisible(bool visible)
     {
-        panelRenderer?.SetVisible(visible);
+        _visible = visible;
+        foreach (var panel in _panels) panel?.SetVisible(visible);
+        if (_panels.Count == 0) panelRenderer?.SetVisible(visible);
         if (!visible) statsOverlay?.SetVisible(false);
+        _layoutKey = "";
     }
 
     public async Task<bool> StartVideoSession(string signalingHost, int signalingPort, string preset, bool showDebugStats)
@@ -69,16 +87,20 @@ public class VideoStreamManager : MonoBehaviour
         if (_state != SessionState.Idle) return false;
         if (videoReceiver == null) { FailFatal("Video receiver missing."); return false; }
 
+        int generation = ++_generation;
+        _lastPrimaryFrame = 0; _frameWindowStart = 0; _frameWindowCount = 0; _receiveFps = 0; _frameTimes.Clear(); _visibilityReceived = false; _enabledTracks.Clear(); _startedAt = Time.unscaledTime;
+        _layoutKey = "";
         _sessionId = Guid.NewGuid().ToString("N");
         _signalingClient = new VideoSignalingClient();
-        _signalingClient.OnEnvelope += e => EnqueueMainThread(() => HandleEnvelope(e));
-        _signalingClient.OnError += error => EnqueueMainThread(() => FailFatal(error));
+        _signalingClient.OnEnvelope += e => EnqueueMainThread(() => { if (generation == _generation) HandleEnvelope(e); });
+        _signalingClient.OnError += error => EnqueueMainThread(() => { if (generation == _generation) FailFatal(error); });
         _signalingClient.OnConnected += () => EnqueueMainThread(() =>
         {
+            if (generation != _generation) return;
             _state = SessionState.Connected;
             statsOverlay?.SetSignalingState("connected");
         });
-        _signalingClient.OnDisconnected += () => EnqueueMainThread(() => statsOverlay?.SetSignalingState("disconnected"));
+        _signalingClient.OnDisconnected += () => EnqueueMainThread(() => { if (generation == _generation && !_isStopping) FailFatal("视频信令已断开"); });
 
         _state = SessionState.SignalingConnecting;
         SetVideoUiVisible(true);
@@ -89,6 +111,7 @@ public class VideoStreamManager : MonoBehaviour
         LogInfo($"session={_sessionId} signaling connect {signalingHost}:{signalingPort} preset={preset}");
 
         bool connected = await _signalingClient.ConnectAsync(signalingHost, signalingPort, 4000);
+        if (generation != _generation) return false;
         if (!connected) { FailFatal("Signaling connection failed."); return false; }
         panelRenderer?.SetStatus("Signaling Connected");
         LogInfo("signaling connected");
@@ -103,7 +126,9 @@ public class VideoStreamManager : MonoBehaviour
         // video_config (or timeout) before creating the offer so the number of
         // recv transceivers matches the number of host sources.
         await _signalingClient.SendAsync("hello", _sessionId, $"{{\"app_version\":\"{Application.version}\",\"video_preset\":\"{preset}\",\"client_name\":\"quest\"}}");
+        if (generation != _generation) return false;
         _state = SessionState.AwaitConfig;
+        if (AppManager.Instance != null) AppManager.Instance.Status.video = MediaState.WaitingFrame;
         _configTimer = 0f;
         _configResolved = false;
         _offerStarted = false;
@@ -115,6 +140,7 @@ public class VideoStreamManager : MonoBehaviour
     {
         if (_isStopping) return;
         _isStopping = true;
+        ++_generation;
         _state = SessionState.Stopping;
         statsOverlay?.SetSignalingState("stopping");
         LogInfo($"stopping session reason={reason}");
@@ -149,6 +175,9 @@ public class VideoStreamManager : MonoBehaviour
         _sessionId = string.Empty;
         _state = SessionState.Idle;
         _isStopping = false;
+        SetVideoUiVisible(false);
+        _frameTimes.Clear(); _lastPrimaryFrame = 0;
+        if (AppManager.Instance != null) AppManager.Instance.Status.video = MediaState.Off;
         LogInfo("session stopped");
     }
 
@@ -158,6 +187,7 @@ public class VideoStreamManager : MonoBehaviour
         {
             try { action?.Invoke(); } catch { }
         }
+        UpdateWorkspaceState();
         if (_state == SessionState.AwaitConfig && !_configResolved)
         {
             _configTimer += Time.deltaTime;
@@ -178,9 +208,14 @@ public class VideoStreamManager : MonoBehaviour
         LogInfo($"local offer sdp_len={sdp.Length} video_mlines={videoMLines}");
         if (videoMLines == 0) { FailFatal("Local SDP offer missing m=video."); return; }
 
-        await _signalingClient.SendAsync("offer", _sessionId,
-            new JObject { ["sdp"] = sdp ?? string.Empty }.ToString(Newtonsoft.Json.Formatting.None));
-        LogInfo("offer sent to host");
+        int generation = _generation;
+        try
+        {
+            await _signalingClient.SendAsync("offer", _sessionId,
+                new JObject { ["sdp"] = sdp ?? string.Empty }.ToString(Newtonsoft.Json.Formatting.None));
+            if (generation == _generation) LogInfo("offer sent to host");
+        }
+        catch (Exception ex) { if (generation == _generation) FailFatal(ex.Message); }
     }
 
     private async void OnLocalIceCandidate(string candidate, string sdpMid, int? sdpMLineIndex)
@@ -192,13 +227,27 @@ public class VideoStreamManager : MonoBehaviour
             ["sdpMid"] = sdpMid,
             ["sdpMLineIndex"] = sdpMLineIndex.HasValue ? sdpMLineIndex.Value : JValue.CreateNull(),
         };
-        await _signalingClient.SendAsync("ice_candidate", _sessionId,
-            payload.ToString(Newtonsoft.Json.Formatting.None));
-        LogDebug("local ICE sent");
+        int generation = _generation;
+        try
+        {
+            await _signalingClient.SendAsync("ice_candidate", _sessionId, payload.ToString(Newtonsoft.Json.Formatting.None));
+            if (generation == _generation) LogDebug("local ICE sent");
+        }
+        catch (Exception ex) { if (generation == _generation) FailFatal(ex.Message); }
     }
 
     private void OnRemoteTextureForTrack(int trackIndex, Texture texture)
     {
+        if (_isStopping || _state == SessionState.Idle) return;
+        _frameTimes[trackIndex] = QuestPacketEnvelope.MonotonicUs();
+        if (trackIndex == _selectedTrack)
+        {
+            _lastPrimaryFrame = _frameTimes[trackIndex]; AppManager.Instance?.MarkStartup("video_first_decoded_frame");
+            _frameWindowCount++;
+            if (_frameWindowStart == 0) _frameWindowStart = _lastPrimaryFrame;
+            if (_lastPrimaryFrame - _frameWindowStart >= 1000000)
+            { _receiveFps = _frameWindowCount * 1000000f / (_lastPrimaryFrame - _frameWindowStart); _frameWindowStart = _lastPrimaryFrame; _frameWindowCount = 0; }
+        }
         if (trackIndex >= 0 && trackIndex < _panels.Count && _panels[trackIndex] != null)
         {
             _panels[trackIndex].SetTexture(texture);
@@ -327,10 +376,12 @@ public class VideoStreamManager : MonoBehaviour
     private async void ResolveConfig(List<TrackSpec> specs)
     {
         if (_configResolved) return;
+        int generation = _generation;
         _configResolved = true;
         _tracks.Clear();
         _tracks.AddRange(specs);
 
+        _selectedTrack = Mathf.Clamp(_selectedTrack, 0, Mathf.Max(0, specs.Count - 1));
         BuildPanels(specs);
 
         videoReceiver.SetExpectedTrackCount(specs.Count);
@@ -348,10 +399,12 @@ public class VideoStreamManager : MonoBehaviour
             return;
         }
 
+        if (generation != _generation || _isStopping) return;
         if (_offerStarted) return;
         _offerStarted = true;
         _state = SessionState.OfferSent;
         bool offerOk = await videoReceiver.CreateAndSendOfferAsync();
+        if (generation != _generation) return;
         if (!offerOk) FailFatal("Offer creation failed.");
         else LogInfo("local offer created");
     }
@@ -388,7 +441,8 @@ public class VideoStreamManager : MonoBehaviour
         rend.SetSizeMultiplier(spec.sizeMultiplier);
         rend.ApplyFov(spec.fovH, spec.width, spec.height);
         rend.SetVisible(true);
-        rend.SetStatus("Waiting Video...");
+        rend.SetCaption(spec.label);
+        rend.SetStatus("等待相机首帧…");
     }
 
     private void SetRendererFields(VideoPanelRenderer rend, GameObject root, RawImage rawImage)
@@ -412,6 +466,17 @@ public class VideoStreamManager : MonoBehaviour
 
     private Transform ResolveEyeAnchor()
     {
+        if (AppManager.Instance != null && AppManager.Instance.Settings.worldLockedVideo)
+        {
+            if (_worldAnchor == null)
+            {
+                _worldAnchor = new GameObject("Video World Anchor").transform;
+                var camera = Camera.main;
+                if (camera != null) _worldAnchor.SetPositionAndRotation(camera.transform.position, camera.transform.rotation);
+            }
+            return _worldAnchor;
+        }
+        if (_worldAnchor != null) { Destroy(_worldAnchor.gameObject); _worldAnchor = null; }
         if (eyeAnchor != null) return eyeAnchor;
         // Prefer the main camera (CenterEyeAnchor in the OVR rig) so layout
         // positions are eye-relative. Falls back to the template panel's parent.
@@ -498,47 +563,13 @@ public class VideoStreamManager : MonoBehaviour
     {
         try
         {
-            JObject root = JObject.Parse(payloadJson);
-            JArray arr = root["enabled"] as JArray;
-            if (arr == null) return;
-            var enabled = new HashSet<string>();
-            foreach (JToken t in arr)
-            {
-                string s = t?.ToString();
-                if (!string.IsNullOrEmpty(s)) enabled.Add(s);
-            }
-            int minIdx = 0;
-            Transform anchor = ResolveEyeAnchor();
-            for (int i = 0; i < _tracks.Count && i < _panels.Count; i++)
-            {
-                var panel = _panels[i];
-                if (panel == null) continue;
-                bool vis = enabled.Contains(_tracks[i].label);
-                if (vis)
-                {
-                    // Restore the configured layout (a muted panel may have
-                    // been shrunk/moved to the edge).
-                    panel.SetAnchor(anchor, _tracks[i].position, _tracks[i].distance);
-                    panel.SetSizeMultiplier(_tracks[i].sizeMultiplier);
-                    panel.SetVisible(true);
-                    panel.SetStatus(string.Empty);
-                }
-                else if (minimizeMutedPanels)
-                {
-                    Vector3 pos = minimizedOrigin + new Vector3(minimizedSpacing * minIdx, 0f, 0f);
-                    minIdx++;
-                    panel.SetAnchor(anchor, pos, minimizedOrigin.z);
-                    panel.SetSizeMultiplier(minimizedScale);
-                    panel.SetVisible(true);
-                }
-                else
-                {
-                    panel.SetVisible(false);
-                }
-                LogDebug($"visibility track={_tracks[i].label} visible={vis} mode={(vis ? "full" : minimizeMutedPanels ? "min" : "hide")}");
-            }
+            JArray enabled = JObject.Parse(payloadJson)["enabled"] as JArray;
+            if (enabled == null) return;
+            _enabledTracks.Clear();
+            foreach (var item in enabled) _enabledTracks.Add(item.ToString());
+            _visibilityReceived = true; _layoutKey = "";
         }
-        catch (Exception ex) { LogDebug($"track_visibility parse failed: {ex.Message}"); }
+        catch (Exception ex) { LogDebug("track_visibility parse failed: " + ex.Message); }
     }
 
     private void HandleServerError(string payloadJson)
@@ -554,21 +585,54 @@ public class VideoStreamManager : MonoBehaviour
 
     private async void FailFatal(string reason)
     {
-        if (string.IsNullOrWhiteSpace(reason)) reason = "Unknown video failure";
+        if (_isStopping) return;
         statsOverlay?.SetError(reason);
-        panelRenderer?.SetStatus($"Video Error: {reason}");
-        if (LogManager.Instance != null)
+        if (_state != SessionState.Idle) await StopVideoSession("video_error");
+        AppManager.Instance?.VideoFault(reason);
+    }
+
+    private void UpdateWorkspaceState()
+    {
+        var app = AppManager.Instance;
+        if (app == null || _state == SessionState.Idle || _isStopping) return;
+        if (_frameTimes.TryGetValue(_selectedTrack, out long received)) _lastPrimaryFrame = received;
+        if (_lastPrimaryFrame > 0)
         {
-            LogManager.Instance.Log(logSource, $"[Video] {reason}");
+            bool selectedEnabled = !_visibilityReceived || _selectedTrack < _tracks.Count && _enabledTracks.Contains(_tracks[_selectedTrack].label);
+            bool stale = LastFrameAgeSeconds > 0.75 || !selectedEnabled;
+            app.Status.video = stale ? MediaState.Stale : MediaState.Playing;
+            for (int i = 0; i < _panels.Count; i++)
+            {
+                bool trackStale = !_frameTimes.TryGetValue(i, out long frame) || QuestPacketEnvelope.MonotonicUs() - frame > 750000;
+                _panels[i]?.SetStatus(trackStale ? "画面已中断 · 非实时画面" : "");
+            }
+            if (stale && app.Settings.criticalVideo && app.Session.Requested) app.Session.Pause("必要相机画面已中断");
         }
-        if (_state != SessionState.Idle)
+        else if (Time.unscaledTime - _startedAt > 12) { FailFatal("等待视频首帧超时"); return; }
+        else app.Status.video = MediaState.WaitingFrame;
+        string layoutKey = app.Settings.videoLayout + ":" + app.Settings.videoScale + ":" + app.Settings.worldLockedVideo + ":" +
+            (app.Workspace != null && app.Workspace.SettingsVisible) + ":" + _selectedTrack + ":" + _visible + ":" + _panels.Count;
+        if (layoutKey == _layoutKey) return;
+        _layoutKey = layoutKey;
+        Transform anchor = ResolveEyeAnchor();
+        bool compact = app.Settings.videoLayout == VideoLayout.Thumbnail || app.Workspace != null && app.Workspace.SettingsVisible;
+        for (int i = 0; i < _panels.Count && i < _tracks.Count; i++)
         {
-            await StopVideoSession("fatal_error");
+            var panel = _panels[i]; if (panel == null) continue;
+            bool hostVisible = !_visibilityReceived || _enabledTracks.Contains(_tracks[i].label);
+            panel.SetVisible(_visible && app.Settings.videoLayout != VideoLayout.Hidden && (hostVisible || minimizeMutedPanels));
+            bool thumbnail = compact || i != _selectedTrack || !hostVisible;
+            Vector3 position = thumbnail ? new Vector3(-0.65f + 0.27f * i, -0.25f, 1.2f) : _tracks[i].position;
+            float scale = thumbnail ? 0.16f : _tracks[i].sizeMultiplier * app.Settings.videoScale;
+            panel.SetAnchor(anchor, position, thumbnail ? 1.2f : _tracks[i].distance);
+            panel.SetSizeMultiplier(scale);
         }
-        if (AppManager.Instance != null && AppManager.Instance.isStreaming)
-        {
-            AppManager.Instance.HandleDisconnection($"Video failure: {reason}");
-        }
+    }
+
+    private void OnDestroy()
+    {
+        ++_generation; _signalingClient?.Dispose();
+        if (_worldAnchor != null) Destroy(_worldAnchor.gameObject);
     }
 
     private void EnqueueMainThread(Action action)

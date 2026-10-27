@@ -85,8 +85,14 @@ public class StatusHud : MonoBehaviour
         _text.outlineColor = new Color(0f, 0f, 0f, 0.85f);
     }
 
+    private float _nextRefresh;
     private void LateUpdate()
     {
+        if (_text == null) return;
+        bool visible = AppManager.Instance != null && AppManager.Instance.ShowDiagnostics;
+        _text.enabled = visible;
+        if (!visible || Time.unscaledTime < _nextRefresh) return;
+        _nextRefresh = Time.unscaledTime + 0.15f;
         Canvas canvas = GetComponent<Canvas>();
         if (canvas != null && canvas.worldCamera == null)
         {

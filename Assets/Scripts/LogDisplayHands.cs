@@ -21,8 +21,19 @@ public class LogDisplayHands : MonoBehaviour
     // Optimization: Cache StringBuilder to avoid memory garbage
     private StringBuilder _sb = new StringBuilder(1000);
 
+    private float _nextRefresh;
     private void Update()
     {
+        if (AppManager.Instance == null || !AppManager.Instance.ShowDiagnostics)
+        {
+            if (logText != null) logText.enabled = false;
+            if (legacyLogText != null) legacyLogText.enabled = false;
+            return;
+        }
+        if (Time.unscaledTime < _nextRefresh) return;
+        _nextRefresh = Time.unscaledTime + 0.15f;
+        if (logText != null) logText.enabled = true;
+        if (legacyLogText != null) legacyLogText.enabled = true;
         UpdateDisplayLimit();
         DisplayLog();
     }

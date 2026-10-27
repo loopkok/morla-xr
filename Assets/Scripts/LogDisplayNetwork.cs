@@ -15,8 +15,19 @@ public class LogDisplayNetwork : MonoBehaviour
     [SerializeField] private string logSource;
     private readonly StringBuilder _sb = new StringBuilder(1024);
 
+    private float _nextRefresh;
     private void Update()
     {
+        if (AppManager.Instance == null || !AppManager.Instance.ShowDiagnostics)
+        {
+            if (logText != null) logText.enabled = false;
+            if (legacyLogText != null) legacyLogText.enabled = false;
+            return;
+        }
+        if (Time.unscaledTime < _nextRefresh) return;
+        _nextRefresh = Time.unscaledTime + 0.15f;
+        if (logText != null) logText.enabled = true;
+        if (legacyLogText != null) legacyLogText.enabled = true;
         DisplayLog();
     }
 

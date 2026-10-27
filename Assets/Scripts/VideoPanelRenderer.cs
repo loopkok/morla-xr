@@ -28,8 +28,23 @@ public class VideoPanelRenderer : MonoBehaviour
     public GameObject PanelRoot => panelRoot;
     public RawImage TargetRawImage => targetRawImage;
 
+    private TMP_Text _caption;
+    public void SetCaption(string label)
+    {
+        if (targetRawImage == null) return;
+        if (_caption == null)
+        {
+            _caption = UiKit.Text(targetRawImage.transform, "CameraLabel", label, 30, Vector2.zero, new Vector2(650, 65));
+            var rect = _caption.rectTransform; rect.anchorMin = new Vector2(0.5f, 1); rect.anchorMax = rect.anchorMin;
+            rect.pivot = new Vector2(0.5f, 1); rect.anchoredPosition = new Vector2(0, -12);
+            _caption.alignment = TextAlignmentOptions.Center; UiKit.SetReadable(_caption, true);
+        }
+        _caption.text = label;
+    }
     private void Awake()
     {
+        if (placeholderText != null) { placeholderText.font = UiKit.Font; placeholderText.richText = false; }
+        if (targetRawImage != null) targetRawImage.raycastTarget = false;
         if (panelRoot != null)
         {
             _canvasRect = panelRoot.GetComponent<RectTransform>();

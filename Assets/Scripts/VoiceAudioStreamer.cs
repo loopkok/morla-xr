@@ -66,10 +66,11 @@ public class VoiceAudioStreamer : MonoBehaviour
         {
             _permissionAsked = _denied = false;
         }
-        if (!enabledByUser || !app.isStreaming || _paused || !_focused)
+        if (!enabledByUser || !app.VoiceSessionEnabled || _paused || !_focused)
         {
             StopCapture();
-            HudLine = enabledByUser ? "Voice: waiting for Start Stream" : "Voice: off";
+            HudLine = enabledByUser ? "Voice: paused" : "Voice: off";
+            if (app != null) { app.Status.voice = enabledByUser ? MediaState.Paused : MediaState.Off; app.Status.voiceMessage = HudLine; }
             return;
         }
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -77,6 +78,7 @@ public class VoiceAudioStreamer : MonoBehaviour
         {
             StopCapture();
             HudLine = _denied ? "Voice: microphone permission denied" : "Voice: allow microphone permission";
+            app.Status.voice = MediaState.PermissionRequired; app.Status.voiceMessage = HudLine;
             if (!_permissionAsked)
             {
                 _permissionAsked = true;
@@ -88,7 +90,9 @@ public class VoiceAudioStreamer : MonoBehaviour
             return;
         }
 #endif
-        if (_capture == null && (Time.realtimeSinceStartupAsDouble < _nextCaptureAttempt || !StartCapture(app.ServerIP))) return;
+        voicePort = app.Settings.voicePort;
+        if (_capture != null && _host != app.Settings.VoiceHost) StopCapture();
+        if (_capture == null && (Time.realtimeSinceStartupAsDouble < _nextCaptureAttempt || !StartCapture(app.Settings.VoiceHost))) return;
         ReadMicrophone();
         while (_feedback.TryDequeue(out string json))
         {
@@ -98,20 +102,28 @@ public class VoiceAudioStreamer : MonoBehaviour
                 if (result.type != "feedback") continue;
                 _lastResult = (result.message ?? "").Replace('\n', ' ');
                 if (_lastResult.Length > 180) _lastResult = _lastResult.Substring(0, 180);
-                PlayTone(result.phase == "confirmed");
+                string phase = result.phase == "confirmed" ? "主机已确认" : result.phase == "submitted" ? "主机已接收" : "未完成";
+                app.Status.feedback = phase + "：" + _lastResult;
+                app.Status.voiceHistory.Add(app.Status.feedback);
+                if (app.Status.voiceHistory.Count > 8) app.Status.voiceHistory.RemoveAt(0);
+                if (result.phase == "confirmed" || result.phase == "failed" || result.phase == "rejected") PlayTone(result.phase == "confirmed");
             }
             catch (ArgumentException) { }
         }
+        app.Status.voice = _networkStatus == "microphone uplink connected" ? MediaState.Playing : MediaState.Connecting;
+        app.Status.voiceMessage = _networkStatus;
         HudLine = "Voice: " + _networkStatus + "  :" + voicePort + "\n" + _lastResult;
     }
 
     private bool StartCapture(string host)
     {
+        if (_networkThread != null && _networkThread.IsAlive) return false;
         try
         {
             if (Microphone.devices.Length == 0) throw new InvalidOperationException("no microphone");
             _capture = Microphone.Start(null, true, 2, Rate);
             if (_capture == null || _capture.frequency != Rate) throw new InvalidOperationException("16 kHz microphone unavailable");
+            AppManager.Instance.Status.voiceRecording = true;
             _samples = new float[Samples * _capture.channels];
             _cursor = 0;
             _lastReadTime = Time.realtimeSinceStartupAsDouble;
@@ -126,6 +138,8 @@ public class VoiceAudioStreamer : MonoBehaviour
             StopCapture();
             _nextCaptureAttempt = Time.realtimeSinceStartupAsDouble + 2;
             HudLine = "Voice: " + ex.Message;
+            AppManager.Instance.Status.voice = MediaState.Faulted;
+            AppManager.Instance.Status.voiceMessage = ex.Message;
             return false;
         }
     }
@@ -227,12 +241,15 @@ public class VoiceAudioStreamer : MonoBehaviour
     }
 
     private void ClearFrames() { while (_frames.TryDequeue(out Frame ignored)) { } }
+    public void StopForSession() => StopCapture();
     private void StopCapture()
     {
+        if (AppManager.Instance != null) AppManager.Instance.Status.voiceRecording = false;
         _running = false;
         Connection connection = _connection;
         if (connection != null) { connection.Alive = false; connection.Client.Close(); }
-        if (_networkThread != null) { _networkThread.Join(1300); _networkThread = null; }
+        // Closed sockets wake the worker. Never join from the render thread.
+        if (_networkThread != null && !_networkThread.IsAlive) _networkThread = null;
         if (_capture != null) { Microphone.End(null); Destroy(_capture); _capture = null; }
         ClearFrames();
         while (_feedback.TryDequeue(out string ignored)) { }

@@ -19,12 +19,7 @@ public class HeadPoseStreamer : MonoBehaviour
     [SerializeField] private bool logToHUD = true;
     [SerializeField] private string hudLogSource = "Right";
 
-    private UdpClient _udpClient;
-    private TcpClient _tcpClient;
-    private NetworkStream _tcpStream;
-    private IPEndPoint _remoteEndPoint;
     private bool _isInitialized;
-    private int _currentProtocol = -1;
     private float _timer;
 
     private readonly StringBuilder _sbPacket = new StringBuilder(256);
@@ -116,7 +111,7 @@ public class HeadPoseStreamer : MonoBehaviour
         _sbPacket.Append(", ");
         AppendQuaternion(_sbPacket, rotation);
 
-        if (logToHUD)
+        if (logToHUD && AppManager.Instance.ShowDiagnostics)
         {
             _sbLog.AppendLine("=== [Head] Pose ===");
             _sbLog.Append("Pos: ").AppendLine(FormatVector3Tuple(position));
@@ -137,113 +132,25 @@ public class HeadPoseStreamer : MonoBehaviour
         SendData(_sbPacket.ToString());
     }
 
+    private TelemetryChannel _channel;
     private void InitializeNetwork()
     {
-        if (AppManager.Instance == null)
-        {
-            return;
-        }
-
-        string ip = AppManager.Instance.ServerIP;
-        int port = AppManager.Instance.ServerPort;
-        _currentProtocol = AppManager.Instance.SelectedProtocol;
-
-        try
-        {
-            if (_currentProtocol == 0)
-            {
-                _udpClient = new UdpClient();
-                _udpClient.Client.SendBufferSize = 0;
-                _remoteEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
-                _udpClient.BeginReceive(new AsyncCallback(OnUdpReceive), null);
-                LogHUD($"Head UDP Ready: {ip}:{port}");
-            }
-            else
-            {
-                _tcpClient = new TcpClient(AddressFamily.InterNetwork);
-                _tcpClient.NoDelay = true;
-                _tcpClient.SendTimeout = 1000;
-                _tcpClient.Connect(ip, port);
-                _tcpStream = _tcpClient.GetStream();
-                QuestPacketEnvelope.StartTcpSyncListener(_tcpStream);
-                string type = _currentProtocol == 1 ? "Wired" : "WiFi";
-                LogHUD($"Head TCP({type}) Connected: {ip}:{port}");
-            }
-            _isInitialized = true;
-        }
-        catch (Exception ex)
-        {
-            LogHUD($"Head Conn Error: {ex.Message}");
-            if (AppManager.Instance != null)
-            {
-                AppManager.Instance.StopStreaming();
-            }
-        }
+        if (_channel != null) return;
+        _channel = AppManager.Instance.CreateChannel("head");
+        _isInitialized = true;
     }
-
-    private void OnUdpReceive(IAsyncResult res)
-    {
-        QuestPacketEnvelope.ContinueUdpSyncReceive(
-            _udpClient, res, new AsyncCallback(OnUdpReceive));
-    }
-
     private void SendData(string message)
     {
-        if (AppManager.Instance != null && !AppManager.Instance.isStreaming)
-        {
-            return;
-        }
-        message = QuestPacketEnvelope.Wrap(message);
-
-        try
-        {
-            if (_currentProtocol == 0 && _udpClient != null)
-            {
-                byte[] data = Encoding.UTF8.GetBytes(message);
-                _udpClient.Send(data, data.Length, _remoteEndPoint);
-            }
-            else if ((_currentProtocol == 1 || _currentProtocol == 2) && _tcpStream != null && _tcpStream.CanWrite)
-            {
-                byte[] data = Encoding.UTF8.GetBytes(message + "\n");
-                QuestPacketEnvelope.WriteTcp(_tcpStream, data);
-            }
-        }
-        catch (Exception ex)
-        {
-            Disconnect();
-            if (AppManager.Instance != null)
-            {
-                AppManager.Instance.HandleDisconnection("Head pose send failed: " + ex.Message);
-            }
-        }
+        if (AppManager.Instance == null || !AppManager.Instance.isStreaming || string.IsNullOrWhiteSpace(message)) return;
+        if (!_isInitialized) InitializeNetwork();
+        _channel?.Submit(message);
     }
-
+    public void CloseTransport() => Disconnect();
     private void Disconnect()
     {
-        try
-        {
-            if (_udpClient != null)
-            {
-                _udpClient.Close();
-                _udpClient = null;
-            }
-            if (_tcpStream != null)
-            {
-                _tcpStream.Close();
-                _tcpStream = null;
-            }
-            if (_tcpClient != null)
-            {
-                _tcpClient.Close();
-                _tcpClient = null;
-            }
-        }
-        catch
-        {
-            // ignored
-        }
-        _isInitialized = false;
+        _channel?.Dispose(); _channel = null; _isInitialized = false;
     }
+
 
     private static ulong GetMonotonicTimestampNs()
     {
@@ -293,7 +200,7 @@ public class HeadPoseStreamer : MonoBehaviour
 
     private void LogHUD(string msg)
     {
-        if (logToHUD && LogManager.Instance != null)
+        if (logToHUD && AppManager.Instance != null && AppManager.Instance.ShowDiagnostics && LogManager.Instance != null)
         {
             LogManager.Instance.Log(hudLogSource, msg);
         }
