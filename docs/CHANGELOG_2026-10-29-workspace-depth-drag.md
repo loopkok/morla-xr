@@ -66,6 +66,15 @@ position = anchor - rotation * (_grabLocal * scale);   // _grabLocal 是画布�
 
 状态栏现在也能抓（`statusBar` 同挂 `WorkspaceWindowDrag`）：轻点是打开概览页（原有行为），拖过 8 px 阈值 uGUI 自动取消点击、改成移动整块面板。概览页说明里加了一行操作提示。
 
+### 7. 手柄搬运（按住即抓）
+
+第一版只能"射线对准状态栏/标题栏 + 扣扳机"才能拖，手柄用户反馈"按住菜单键拖不动"——因为源码里从来没有按键抓取这条路。新增 `WorkspaceGrab`（`AppManager` 挂在工作区根节点上）：
+
+- **按住侧键（握把）**任意一只手 → 立刻抓住整块工作区，面板的相对位置固定在手上（`_offset = 面板位置 − 手柄位置`），推拉/横移 1:1 跟手，不需要先瞄到标题栏。
+- **长按 ☰ 0.45 s** 同样进入搬运；**短按 ☰ 仍是开/关设置**。为了不打架，`AppManager.Update` 里原有的 `Button.Start` 处理已删除，☰ 统一由 `WorkspaceGrab` 负责：长按吞掉那次点击（`_menuUsedForGrab`），释放时才决定是开设置还是结束搬运。
+- 距离夹 0.45–2.4 m、低于眼睛 1 m 抬起、按水平方向 billboard、缩放走同一个 `ScaleForDistance`——和手部捏合拖动完全一致的远近与"等视角"表现。
+- 只有该侧**当前生效输入**的手柄能搬运（`Tracking.ControllerActive`），桌上的手柄不会误动面板；抓取瞬间同样 `EnterUiInteraction()`（暂停发送，不变量 8）。
+
 ## 验证
 
 - 静态编译（Unity csc + Unity/Meta 程序集，editor 与 android 两套 define）：**0 错误**。harness 在 `C:\Users\njk\AppData\Local\Temp\morla_check\compile.sh`（临时目录，不入库）。

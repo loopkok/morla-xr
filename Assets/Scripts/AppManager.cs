@@ -87,6 +87,7 @@ namespace MORLA.XR
             var root = prefab != null ? Instantiate(prefab) : new GameObject("MORLA Workspace");
             Workspace = root.GetComponent<WorkspaceUIController>() ?? root.AddComponent<WorkspaceUIController>();
             if (root.GetComponent<WorkspacePointer>() == null) root.AddComponent<WorkspacePointer>();
+            if (root.GetComponent<WorkspaceGrab>() == null) root.AddComponent<WorkspaceGrab>();
             if (!string.IsNullOrEmpty(SettingsStore.LoadWarning)) Notify(SettingsStore.LoadWarning);
             Debug.Log($"[MORLA Startup] services_ready_us={QuestPacketEnvelope.MonotonicUs() - _createdUs}");
         }
@@ -95,8 +96,8 @@ namespace MORLA.XR
         private void Update()
         {
             while (_events.TryDequeue(out var action)) action();
-            if (Session != null && OVRInput.GetDown(OVRInput.Button.Start, OVRInput.Controller.LTouch))
-            { Session.EnterUiInteraction(); Workspace.ToggleSettings(); }
+            // The ☰ key belongs to WorkspaceGrab: a tap toggles the settings, a hold carries the
+            // whole workspace. Handling it here as well would toggle twice / fight the grab.
         }
         public void Enqueue(Action action) => _events.Enqueue(action);
         public TelemetryChannel CreateChannel(string source)
