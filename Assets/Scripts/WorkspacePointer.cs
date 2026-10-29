@@ -168,7 +168,7 @@ namespace MORLA.XR
             }
             if (!down && pointer.down) Release(pointer, true);
             if (hit != null && Mathf.Abs(scroll) > 0.15f)
-            { data.scrollDelta = new Vector2(0, scroll * Time.unscaledDeltaTime * 100); ExecuteEvents.ExecuteHierarchy(hit, data, ExecuteEvents.scrollHandler); }
+            { data.scrollDelta = new Vector2(0, scroll * Time.unscaledDeltaTime * 500); ExecuteEvents.ExecuteHierarchy(hit, data, ExecuteEvents.scrollHandler); }
             pointer.down = down; return hit != null;
         }
         /// <summary>Ray from the hand to the canvas plus a cursor at the exact landing point.</summary>

@@ -221,7 +221,7 @@ namespace MORLA.XR
         private void Overview()
         {
             Note("Quest 3 · 主机 " + App.ServerIP + ":" + App.ServerPort + "\n本地追踪独立运行；设置交互时暂停位姿发送。"
-                + "\n按住侧键（或长按 ☰）把工作区拿在手上，或用射线抓住状态栏/标题栏拖动；手往里收即拉近、往前推即推远。远近大小默认按真实透视，「视频与显示」页可切成等视角。");
+                + "\n按住侧键（或长按 ☰）把工作区拿在手上，或用射线抓住状态栏/标题栏拖动；手往里收即拉近、往前推即推远。远近大小默认等视角（推远实际变大、看起来一样大），「视频与显示」页可切成真实透视。");
             var live = UiKit.FlowText(_page, "", 26, 295);
             _live.Add(() => live.text = "位姿  " + App.Status.TelemetryLabel + "\n视频  " + MediaLabel(App.Status.video) +
                 "\n语音  " + MediaLabel(App.Status.voice) + "\n机器人  " + App.Status.robot + "\n使能：" + App.Status.robotEnabled + " · 采集：" + App.Status.robotRecording +

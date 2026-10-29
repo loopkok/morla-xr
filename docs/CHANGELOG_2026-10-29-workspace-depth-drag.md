@@ -59,7 +59,7 @@ position = anchor - rotation * (_grabLocal * scale);   // _grabLocal 是画布�
 
 - 距离夹在 **0.45–2.4 m**：不会推进脸里，也不超出 `Reachable`（≤2.5 m）导致 2 s 后被自动归位。
 - 不高于眼睛下方 1 m（与 `Reachable` 的 `offset.y >= -1` 一致）。
-- 朝向按水平方向 billboard（`ProjectOnPlane(..., Vector3.up)` + `LookRotation`），推远时面板始终正对你，不会保持旧倾角。
+- 朝向见 §9：现在是 `FaceHead`（面板中心看向用户），这里最初写的是水平 billboard，已被真机反馈推翻。
 - 拖动开始仍走 `Session.EnterUiInteraction()`（按下即暂停发送，不变量 8）；结束 `OnEndDrag` 调 `SaveCurrentPose()` 落盘。
 
 ### 6. 多一个抓取入口
@@ -86,10 +86,24 @@ position = anchor - rotation * (_grabLocal * scale);   // _grabLocal 是画布�
 | 和手位置不一样 | 抓取点用固定世界偏移，手腕一转光标就滑走了 | 改成 `anchor = ray.GetPoint(抓取距离)`：抓取点始终在光标下，手前后移动才改远近 |
 | 基本没放大缩小 | 等视角本身就"看起来一样大"——这是它的定义，不是没生效 | 默认改为**固定物理尺寸**（远处自然变小，Quest 系统界面的观感），设置页「拖远后的大小」可切回等视角 |
 
-新增 `AppSettings.angularWindowScale`（默认 false）与「视频与显示」页的「拖远后的大小」分段控件；`Recenter`/恢复位姿后的 `ApplyDistanceScale` 也按这个开关走。
+新增 `AppSettings.angularWindowScale` 与「视频与显示」页的「拖远后的大小」分段控件；`Recenter`/恢复位姿后的 `ApplyDistanceScale` 也按这个开关走。（当时默认改为 false，§9 又按 Quest 手感改回 true。）
+
+### 9. 第二轮真机反馈：方向、速度、倾斜、列表滚动
+
+真机反馈：「手往远处界面离开我并放大、手往回靠近我并缩小的逻辑是反的；靠近远离很慢、很难移到远/近；窗口移到上方/左边/右边角度都不变、应该倾斜看向我；菜单页手柄点击上下滑动过快、摇杆又太慢。」
+
+| 现象 | 根因 | 修正 |
+|---|---|---|
+| 远近方向"反了"、几乎看不到缩放 | 默认是**固定物理尺寸**：推远面板确实离开了，但世界尺寸不变 → 视角上变小。这正是上一轮"看起来没放大缩小"的回头账 | `angularWindowScale` 默认改回 **true（等视角）**：距离 ×k → 缩放 ×k，推远面板离开且**变大**，收回靠近且**变小**，与 Quest 3 一致 |
+| 靠近/远离很慢、很难移到远处或近处 | 深度 1:1 跟手：手臂前后可动范围只有 0.3–0.5 m，却要走 0.45–2.4 m | 新增 `WorkspaceWindowDrag.DepthGain = 2`：位移沿水平视线方向的分量 ×2，横向/纵向保持 1:1；`WorkspaceGrab` 用同一常量 |
+| 移到上方/侧边角度不变 | 上一轮为修"抓右端就往右倒"改成了**只取偏航的 billboard**——确实不倒了，但也永远朝前 | 换成 `FaceHead(head, centre)`：`LookRotation(centre − head)`，面板看向用户。上方 → 低头看你，右侧 → 转向你。位置与朝向互相依赖，故两遍迭代（先由旋转算位置，再由位置算旋转） |
+| 列表拖动过快 | `ScrollRect` 松手后把最后一帧的 `m_Velocity` 交给默认 `decelerationRate = 0.135` 做惯性滑行，长列表一甩就飞很远 | `UiKit.ScrollPage` 里 `scroll.inertia = false`：拖动严格 1:1，松手即停 |
+| 摇杆滚动太慢 | 每帧只给 `scrollDelta.y = stick × 0.1`，`ScrollRect` 按 `scrollSensitivity` 当格数累加 | 改为 `stick × Time.unscaledDeltaTime × 500`（约 500 本地单位/秒 ≈ 每屏 1 秒） |
+
+顺带查清：`PointerEventData.pressEventCamera` / `enterEventCamera` 是**只读属性**，由 `pointerPressRaycast.module.eventCamera` 推导；`GraphicRaycaster.Raycast` 里 `module = this`（uGUI `GraphicRaycaster.cs:266`）已经把画布相机填好，所以那条赋值既编译不过也不需要——"列表拖太快"与相机无关，是惯性。
 
 ## 验证
 
-- 静态编译（Unity csc + Unity/Meta 程序集，editor 与 android 两套 define）：**0 错误**。harness 在 `C:\Users\njk\AppData\Local\Temp\morla_check\compile.sh`（临时目录，不入库）。
+- 静态编译（Unity csc + Unity/Meta 程序集，editor 与 android 两套 define）：**0 错误**（§9 改完后又跑了一遍，同样 0 错误）。harness 在 `C:\Users\njk\AppData\Local\Temp\morla_check\compile.sh`（临时目录，不入库）。
 - **未在 Unity 真实编译、未重建 APK、未真机验收**。设备上装的 1.1.0 / versionCode 8 不含本改动。
 - 需要真机确认的点：手捏合抓取时的顺滑度（射线起点为捏合点，`_grabOffset` 约 0.7 m）、0.45 m 近端是否会糊脸、2.4 m 远端放大后是否遮挡环境、状态栏轻点/拖动的误触率。

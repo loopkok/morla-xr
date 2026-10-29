@@ -24,7 +24,7 @@ namespace MORLA.XR
         private int _side = -1;                 // -1 idle, 0 left, 1 right
         private bool _byMenu, _menuUsedForGrab, _menuWasDown;
         private float _menuHeld;
-        private Vector3 _offset;                // workspace position relative to the controller
+        private Vector3 _pivotStart, _handStart, _flatForward;
         /// <summary>True while a grip/☰ carry owns the workspace pose; ray drags must stand down.</summary>
         public static bool Carrying { get; private set; }
         private AppManager App => AppManager.Instance;
@@ -71,7 +71,10 @@ namespace MORLA.XR
             if (!ControllerPosition(side, out Vector3 position)) return;
             _side = side; _byMenu = byMenu; Carrying = true;
             if (byMenu) _menuUsedForGrab = true;
-            _offset = transform.position - position;
+            _pivotStart = transform.position; _handStart = position;
+            _flatForward = Vector3.ProjectOnPlane(Camera.main.transform.forward, Vector3.up);
+            if (_flatForward.sqrMagnitude < 0.04f) _flatForward = Vector3.forward;
+            _flatForward.Normalize();
             // Grabbing is UI intent: sending pauses and does not resume on release (invariant 8).
             App.Session.EnterUiInteraction();
         }
@@ -90,15 +93,19 @@ namespace MORLA.XR
             if (!ControllerPosition(_side, out Vector3 hand)) return false;
             var canvas = App.Workspace.Canvas.transform;
             Vector3 head = cam.transform.position;
-            Vector3 pivot = hand + _offset;
+            // Same depth gain as the ray drag: an arm's length cannot cover 0.45–2.4 m, so motion
+            // toward/away from the body is amplified while sideways stays one-to-one.
+            Vector3 delta = hand - _handStart;
+            delta += _flatForward * (Vector3.Dot(delta, _flatForward) * (WorkspaceWindowDrag.DepthGain - 1f));
+            Vector3 pivot = _pivotStart + delta;
             Vector3 offset = pivot - head;
             float distance = offset.magnitude;
             if (distance < 0.01f) return false;
             float limited = Mathf.Clamp(distance, MinDistance, MaxDistance);
             if (limited != distance) pivot = head + offset / distance * limited;
-            // Turn to face the user, upright — carrying a panel should not tilt it.
-            Vector3 flat = Vector3.ProjectOnPlane(pivot - head, Vector3.up);
-            Quaternion rotation = flat.sqrMagnitude > 0.0016f ? Quaternion.LookRotation(flat.normalized, Vector3.up) : transform.rotation;
+            // Turn to look at the user from where the panel now sits: carried above them it tips
+            // down at them, carried to the right it turns back toward them.
+            Quaternion rotation = WorkspaceWindowDrag.FaceHead(head, pivot, transform.rotation);
             float floor = head.y - MaxDropBelowEyes;
             if (pivot.y < floor) pivot.y = floor;
             transform.SetPositionAndRotation(pivot, rotation);

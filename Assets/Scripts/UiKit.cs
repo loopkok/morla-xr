@@ -346,6 +346,10 @@ namespace MORLA.XR
             layout.padding = new RectOffset(14, 14, 10, 26);
             var fitter = content.gameObject.AddComponent<ContentSizeFitter>(); fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             scroll.viewport = viewport; scroll.content = content; scroll.horizontal = false; scroll.movementType = ScrollRect.MovementType.Clamped;
+            // A ray drag is meant to be 1:1 with the hand. With inertia on, the release velocity of
+            // the last frame (which jumps when the ray skims the canvas plane) is carried into a
+            // long glide of ScrollRect's default 0.135 deceleration — the list "flew" on release.
+            scroll.inertia = false;
             return content;
         }
         public static void SetReadable(TMP_Text text, bool highContrast)

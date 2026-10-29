@@ -35,9 +35,9 @@ namespace MORLA.XR
         public int robotPort = 8080;
         public bool autoConnect;
         public bool hasWindowPose;
-        // false = the workspace keeps its physical size (Quest default: farther looks smaller);
-        // true = constant angular size, where a far panel grows in metres to stay legible.
-        public bool angularWindowScale;
+        // Quest-shell default: constant angular size, so pushing the panel away grows it in metres
+        // and it stays just as legible. false = fixed physical size, where farther looks smaller.
+        public bool angularWindowScale = true;
         public Vector3 windowPosition;
         public Quaternion windowRotation = Quaternion.identity;
 
