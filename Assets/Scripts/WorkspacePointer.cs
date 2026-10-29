@@ -26,8 +26,13 @@ namespace MORLA.XR
         private readonly Pointer[] _handPointers = { new Pointer(), new Pointer() };
         private static HandLandmarkStreamer[] _landmarks;
         private static bool _released = true;
+        // A drag carried through uGUI only delivers the intersection with the canvas plane, which
+        // loses how far the hand really is. Handlers that move things in depth (WorkspaceWindowDrag)
+        // read the live pointer ray instead, keyed by pointer id so two hands cannot mix rays.
+        private static readonly Dictionary<int, Ray> _dragRays = new Dictionary<int, Ray>();
         private AppManager App => AppManager.Instance;
         public static bool InputsReleased() => _released;
+        public static bool TryGetDragRay(int pointerId, out Ray ray) => _dragRays.TryGetValue(pointerId, out ray);
         private void Start()
         {
             _landmarks = FindObjectsByType<HandLandmarkStreamer>(FindObjectsSortMode.None);
@@ -137,6 +142,7 @@ namespace MORLA.XR
             }
             if (down && pointer.down && data.pointerDrag != null)
             {
+                _dragRays[data.pointerId] = ray;
                 if (!data.dragging && (data.position - data.pressPosition).sqrMagnitude > 64)
                 { data.dragging = true; data.eligibleForClick = false; ExecuteEvents.Execute(data.pointerDrag, data, ExecuteEvents.beginDragHandler); }
                 if (data.dragging) ExecuteEvents.Execute(data.pointerDrag, data, ExecuteEvents.dragHandler);
@@ -183,6 +189,7 @@ namespace MORLA.XR
         }
         private void ReleaseOutside(Pointer pointer, bool down)
         {
+            _dragRays.Remove(pointer.data.pointerId);
             if (!down && pointer.down) Release(pointer, false);
             if (pointer.hover != null) ExecuteEvents.ExecuteHierarchy(pointer.hover, pointer.data, ExecuteEvents.pointerExitHandler);
             pointer.hover = null; pointer.down = down; HideVisual(pointer);
@@ -190,6 +197,7 @@ namespace MORLA.XR
         private static void Release(Pointer pointer, bool click)
         {
             var data = pointer.data;
+            _dragRays.Remove(data.pointerId);
             if (data.pointerPress != null)
             {
                 ExecuteEvents.Execute(data.pointerPress, data, ExecuteEvents.pointerUpHandler);

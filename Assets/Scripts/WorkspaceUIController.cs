@@ -12,6 +12,14 @@ namespace MORLA.XR
 {
     public sealed class WorkspaceUIController : MonoBehaviour
     {
+        // Sizing is angular: the canvas keeps the same apparent size whatever its distance, so a
+        // panel pushed away grows in metres and one pulled close shrinks. 1100 canvas units at
+        // PlaceDistance metres is the reference (1 canvas unit ≈ 0.9 mm at 1.2 m).
+        public const float BaseCanvasScale = 0.0009f;
+        public const float PlaceDistance = 1.2f;
+        private const float MinScaleFactor = 0.5f, MaxScaleFactor = 2f;
+        public static float ScaleForDistance(float distance) =>
+            BaseCanvasScale * Mathf.Clamp(distance / PlaceDistance, MinScaleFactor, MaxScaleFactor);
         public Canvas Canvas { get; private set; }
         public bool SettingsVisible => _settings != null && _settings.gameObject.activeSelf;
         public bool OnboardingVisible => _onboarding != null && _onboarding.gameObject.activeSelf;
@@ -57,7 +65,7 @@ namespace MORLA.XR
             Canvas = canvasObject.GetComponent<Canvas>(); Canvas.renderMode = RenderMode.WorldSpace;
             Canvas.worldCamera = Camera.main; Canvas.sortingOrder = 100;
             var rect = (RectTransform)Canvas.transform; rect.sizeDelta = new Vector2(1100, 1100);
-            rect.localScale = Vector3.one * 0.0009f;
+            rect.localScale = Vector3.one * BaseCanvasScale;
             // Status bar: translucent chrome that opens the overview page when clicked.
             var statusBar = UiKit.Panel(rect, "StatusBar", new Vector2(0, 425), new Vector2(1000, 88), UiKit.Window, 24);
             UiKit.Shadow(statusBar, 10);
@@ -68,6 +76,10 @@ namespace MORLA.XR
             statusColors.pressedColor = new Color(0.80f, 0.80f, 0.80f, 1f);
             statusColors.fadeDuration = App.Settings.reduceMotion ? 0 : 0.1f;
             statusButton.colors = statusColors; statusButton.onClick.AddListener(() => ShowSettings(0));
+            // The status bar is the workspace's grab bar: a tap opens the overview, a drag carries
+            // the whole panel in depth (uGUI cancels the click once the drag threshold is passed).
+            var statusGrab = statusBar.gameObject.AddComponent<WorkspaceWindowDrag>();
+            statusGrab.target = transform; statusGrab.workspace = this;
             _statusDot = UiKit.Dot(statusBar, "StatusDot", new Vector2(-462, 0), 14, UiKit.Secondary).GetComponent<Image>();
             _statusText = UiKit.Text(statusBar, "StatusStrip", "MORLA XR", 24, new Vector2(10, 0), new Vector2(920, 84), UiKit.Ink, TextAlignmentOptions.Center);
             _noticeBack = UiKit.Panel(rect, "NoticeBack", new Vector2(0, -355), new Vector2(860, 96), new Color(0.09f, 0.09f, 0.10f, 0.80f), 22);
@@ -96,7 +108,8 @@ namespace MORLA.XR
             UiKit.Shadow(_settings, 24);
             var titleBar = UiKit.Panel(_settings, "TitleBar", new Vector2(0, 301), new Vector2(1000, 78), UiKit.Clear, UiKit.WindowRadius, false);
             titleBar.GetComponent<Image>().raycastTarget = true;
-            titleBar.gameObject.AddComponent<WorkspaceWindowDrag>().target = transform;
+            var drag = titleBar.gameObject.AddComponent<WorkspaceWindowDrag>();
+            drag.target = transform; drag.workspace = this;
             UiKit.Text(_settings, "Title", "MORLA XR 设置", 30, new Vector2(-140, 301), new Vector2(560, 70), UiKit.Ink, TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
             var close = UiKit.Panel(_settings, "Close", new Vector2(-452, 302), new Vector2(64, 64), UiKit.Clear, 32, false);
             var closeHit = close.GetComponent<Image>(); closeHit.raycastTarget = true;
@@ -201,7 +214,8 @@ namespace MORLA.XR
         { UiKit.FlowText(_page, label, 22, 38, UiKit.Secondary); UiKit.Input(_page, value, change, numeric); }
         private void Overview()
         {
-            Note("Quest 3 · 主机 " + App.ServerIP + ":" + App.ServerPort + "\n本地追踪独立运行；设置交互时暂停位姿发送。");
+            Note("Quest 3 · 主机 " + App.ServerIP + ":" + App.ServerPort + "\n本地追踪独立运行；设置交互时暂停位姿发送。"
+                + "\n抓住顶部状态栏或标题栏拖动，把手往怀里收即拉近、往前推即推远；远处窗口会自动放大，视角大小不变。");
             var live = UiKit.FlowText(_page, "", 26, 295);
             _live.Add(() => live.text = "位姿  " + App.Status.TelemetryLabel + "\n视频  " + MediaLabel(App.Status.video) +
                 "\n语音  " + MediaLabel(App.Status.voice) + "\n机器人  " + App.Status.robot + "\n使能：" + App.Status.robotEnabled + " · 采集：" + App.Status.robotRecording +
@@ -393,7 +407,18 @@ namespace MORLA.XR
                 transform.SetPositionAndRotation(App.Settings.windowPosition, App.Settings.windowRotation);
             }
             if (Canvas != null) Canvas.worldCamera = cam;
+            ApplyDistanceScale(cam.transform.position);
         }
+        /// <summary>
+        /// Re-derives the angular scale after the workspace moves outside a drag (first placement,
+        /// recenter, restoring a saved pose); a drag sets it itself while the hand is holding it.
+        /// </summary>
+        public void ApplyDistanceScale(Vector3 eyes)
+        {
+            if (Canvas == null) return;
+            Canvas.transform.localScale = Vector3.one * ScaleForDistance(Vector3.Distance(transform.position, eyes));
+        }
+        public void SaveCurrentPose() => SavePose();
         // The eye anchor sits at the tracking-space origin until XR applies the first pose
         // (floor level in this scene), so placing on frame 1 drops the workspace at the user's feet.
         private bool HeadPoseReady()
