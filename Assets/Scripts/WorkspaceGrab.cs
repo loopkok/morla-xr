@@ -14,7 +14,9 @@ namespace MORLA.XR
     [DefaultExecutionOrder(-8500)]
     public sealed class WorkspaceGrab : MonoBehaviour
     {
-        private const float GripThreshold = 0.5f;
+        // High enough that a finger resting on the grip, or a trigger press with a relaxed
+        // squeeze, does not start a carry on top of a ray drag.
+        private const float GripThreshold = 0.7f;
         private const float MenuHoldSeconds = 0.45f;
         // Same reach limits as WorkspaceWindowDrag: arm's length to a couple of steps, never below
         // the floor by more than a metre (that is also what WorkspaceUIController.Reachable allows).
@@ -23,6 +25,8 @@ namespace MORLA.XR
         private bool _byMenu, _menuUsedForGrab, _menuWasDown;
         private float _menuHeld;
         private Vector3 _offset;                // workspace position relative to the controller
+        /// <summary>True while a grip/☰ carry owns the workspace pose; ray drags must stand down.</summary>
+        public static bool Carrying { get; private set; }
         private AppManager App => AppManager.Instance;
 
         private void Update()
@@ -40,7 +44,7 @@ namespace MORLA.XR
                 if (!SourceHeld()) End();
                 else if (!Move(cam)) End();
             }
-            if (_side < 0)
+            if (_side < 0 && !WorkspacePointer.IsDragging)
             {
                 if (menuDown && _menuHeld >= MenuHoldSeconds && Usable(0)) Begin(0, true);
                 else if (GripHeld(0) && Usable(0)) Begin(0, false);
@@ -65,7 +69,7 @@ namespace MORLA.XR
         private void Begin(int side, bool byMenu)
         {
             if (!ControllerPosition(side, out Vector3 position)) return;
-            _side = side; _byMenu = byMenu;
+            _side = side; _byMenu = byMenu; Carrying = true;
             if (byMenu) _menuUsedForGrab = true;
             _offset = transform.position - position;
             // Grabbing is UI intent: sending pauses and does not resume on release (invariant 8).
@@ -74,9 +78,12 @@ namespace MORLA.XR
 
         private void End()
         {
-            _side = -1; _byMenu = false;
+            _side = -1; _byMenu = false; Carrying = false;
             if (App.Workspace != null) App.Workspace.SaveCurrentPose();
         }
+
+        // Never leave the flag standing if this component goes away mid-carry: it gates every ray drag.
+        private void OnDisable() { _side = -1; _byMenu = false; Carrying = false; }
 
         private bool Move(Camera cam)
         {
@@ -96,7 +103,7 @@ namespace MORLA.XR
             if (pivot.y < floor) pivot.y = floor;
             transform.SetPositionAndRotation(pivot, rotation);
             // Constant angular size: the same rule WorkspaceUIController uses after placement.
-            canvas.localScale = Vector3.one * WorkspaceUIController.ScaleForDistance(limited);
+            canvas.localScale = Vector3.one * WorkspaceUIController.ScaleForDistance(limited, App.Settings.angularWindowScale);
             return true;
         }
 

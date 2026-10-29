@@ -18,8 +18,14 @@ namespace MORLA.XR
         public const float BaseCanvasScale = 0.0009f;
         public const float PlaceDistance = 1.2f;
         private const float MinScaleFactor = 0.5f, MaxScaleFactor = 2f;
-        public static float ScaleForDistance(float distance) =>
-            BaseCanvasScale * Mathf.Clamp(distance / PlaceDistance, MinScaleFactor, MaxScaleFactor);
+        /// <summary>
+        /// Canvas scale for a workspace held <paramref name="distance"/> from the eyes.
+        /// <paramref name="constantAngular"/> keeps the apparent size fixed (a far panel grows in
+        /// metres so text stays legible); otherwise the physical size is fixed and a distant panel
+        /// simply looks smaller, which is what the Quest shell does.
+        /// </summary>
+        public static float ScaleForDistance(float distance, bool constantAngular) =>
+            BaseCanvasScale * (constantAngular ? Mathf.Clamp(distance / PlaceDistance, MinScaleFactor, MaxScaleFactor) : 1f);
         public Canvas Canvas { get; private set; }
         public bool SettingsVisible => _settings != null && _settings.gameObject.activeSelf;
         public bool OnboardingVisible => _onboarding != null && _onboarding.gameObject.activeSelf;
@@ -215,7 +221,7 @@ namespace MORLA.XR
         private void Overview()
         {
             Note("Quest 3 · 主机 " + App.ServerIP + ":" + App.ServerPort + "\n本地追踪独立运行；设置交互时暂停位姿发送。"
-                + "\n抓住顶部状态栏或标题栏拖动，把手往怀里收即拉近、往前推即推远；远处窗口会自动放大，视角大小不变。");
+                + "\n按住侧键（或长按 ☰）把工作区拿在手上，或用射线抓住状态栏/标题栏拖动；手往里收即拉近、往前推即推远。远近大小默认按真实透视，「视频与显示」页可切成等视角。");
             var live = UiKit.FlowText(_page, "", 26, 295);
             _live.Add(() => live.text = "位姿  " + App.Status.TelemetryLabel + "\n视频  " + MediaLabel(App.Status.video) +
                 "\n语音  " + MediaLabel(App.Status.voice) + "\n机器人  " + App.Status.robot + "\n使能：" + App.Status.robotEnabled + " · 采集：" + App.Status.robotRecording +
@@ -290,6 +296,8 @@ namespace MORLA.XR
             }
             Toggle("主相机为必要视角", () => _draft.criticalVideo, value => _draft.criticalVideo = value);
             Toggle("视频固定在世界空间", () => _draft.worldLockedVideo, value => _draft.worldLockedVideo = value);
+            Choices("拖远后的大小", new[] { "自然（远看变小）", "等视角（远看变大）" }, _draft.angularWindowScale ? 1 : 0,
+                value => { _draft.angularWindowScale = value == 1; ApplyDistanceScale(Camera.main != null ? Camera.main.transform.position : transform.position); });
             Choices("视频尺寸", new[] { "小", "标准", "大" }, _draft.videoScale < 0.9f ? 0 : _draft.videoScale > 1.1f ? 2 : 1, value => _draft.videoScale = value == 0 ? 0.75f : value == 2 ? 1.25f : 1f);
             Choices("显示刷新率", new[] { "72 Hz", "90 Hz" }, _draft.refresh90 ? 1 : 0, value => _draft.refresh90 = value == 1);
             Note("实际显示刷新率：" + OVRPlugin.systemDisplayFrequency.ToString("F0") + " Hz\n视频预设沿用主机 720p30；显示刷新率不等于手部新样本率。");
@@ -416,7 +424,8 @@ namespace MORLA.XR
         public void ApplyDistanceScale(Vector3 eyes)
         {
             if (Canvas == null) return;
-            Canvas.transform.localScale = Vector3.one * ScaleForDistance(Vector3.Distance(transform.position, eyes));
+            Canvas.transform.localScale = Vector3.one *
+                ScaleForDistance(Vector3.Distance(transform.position, eyes), App.Settings.angularWindowScale);
         }
         public void SaveCurrentPose() => SavePose();
         // The eye anchor sits at the tracking-space origin until XR applies the first pose

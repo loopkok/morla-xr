@@ -75,6 +75,19 @@ position = anchor - rotation * (_grabLocal * scale);   // _grabLocal 是画布�
 - 距离夹 0.45–2.4 m、低于眼睛 1 m 抬起、按水平方向 billboard、缩放走同一个 `ScaleForDistance`——和手部捏合拖动完全一致的远近与"等视角"表现。
 - 只有该侧**当前生效输入**的手柄能搬运（`Tracking.ControllerActive`），桌上的手柄不会误动面板；抓取瞬间同样 `EnterUiInteraction()`（暂停发送，不变量 8）。
 
+### 8. 第一版真机反馈的四处修正
+
+真机（1.1.0 带本轮改动）反馈：「扣扳机拖动一卡一卡、和手位置不一样、基本没放大缩小、右手点右端面板就往右倒」。逐条对回代码：
+
+| 现象 | 根因 | 修正 |
+|---|---|---|
+| 右边点就往右倒、左边点就往左倒 | 朝向按 `head → anchor` 算，而 anchor 就是**抓取点**；抓右端 → 朝右端转 | `FaceUser` 只取 `ProjectOnPlane(camera.forward, up)` 的偏航，朝向与抓在哪无关 |
+| 一卡一卡 | 两个来源：① 面板一旦转到射线背后，`Plane.Raycast` 失败 → `ReleaseOutside` 结束拖动 → 下一帧重新 pointerDown 再等 8 px 阈值；② 侧键握着时 `WorkspaceGrab` 和射线拖动同时每帧写位姿，互相抢 | ① 拖动已成立时平面未命中继续派发 drag 事件（射线照旧缓存）；② `Carrying`/`IsDragging` 双向互斥，侧键阈值 0.5 → 0.7 |
+| 和手位置不一样 | 抓取点用固定世界偏移，手腕一转光标就滑走了 | 改成 `anchor = ray.GetPoint(抓取距离)`：抓取点始终在光标下，手前后移动才改远近 |
+| 基本没放大缩小 | 等视角本身就"看起来一样大"——这是它的定义，不是没生效 | 默认改为**固定物理尺寸**（远处自然变小，Quest 系统界面的观感），设置页「拖远后的大小」可切回等视角 |
+
+新增 `AppSettings.angularWindowScale`（默认 false）与「视频与显示」页的「拖远后的大小」分段控件；`Recenter`/恢复位姿后的 `ApplyDistanceScale` 也按这个开关走。
+
 ## 验证
 
 - 静态编译（Unity csc + Unity/Meta 程序集，editor 与 android 两套 define）：**0 错误**。harness 在 `C:\Users\njk\AppData\Local\Temp\morla_check\compile.sh`（临时目录，不入库）。

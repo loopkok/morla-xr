@@ -30,8 +30,11 @@ namespace MORLA.XR
         // loses how far the hand really is. Handlers that move things in depth (WorkspaceWindowDrag)
         // read the live pointer ray instead, keyed by pointer id so two hands cannot mix rays.
         private static readonly Dictionary<int, Ray> _dragRays = new Dictionary<int, Ray>();
+        private static bool _dragging;
         private AppManager App => AppManager.Instance;
         public static bool InputsReleased() => _released;
+        /// <summary>True while any pointer is carrying a uGUI drag (see WorkspaceGrab, which must not start).</summary>
+        public static bool IsDragging => _dragging;
         public static bool TryGetDragRay(int pointerId, out Ray ray) => _dragRays.TryGetValue(pointerId, out ray);
         private void Start()
         {
@@ -75,6 +78,9 @@ namespace MORLA.XR
             for (int i = 0; i < HandCount; i++)
                 over |= ProcessHand(i == 0 ? HandLandmarkStreamer.HandSide.Left : HandLandmarkStreamer.HandSide.Right, _handPointers[i]);
             App.Workspace.PointerOverUi = over;
+            _dragging = false;
+            foreach (var pointer in _controllers) _dragging |= pointer.data != null && pointer.data.dragging;
+            foreach (var pointer in _handPointers) _dragging |= pointer.data != null && pointer.data.dragging;
         }
         /// <summary>Hand ray from the Interaction SDK hand: world-space pointer pose, pivoted at the pinch point.</summary>
         private bool ProcessHand(HandLandmarkStreamer.HandSide side, Pointer pointer)
@@ -110,11 +116,24 @@ namespace MORLA.XR
         private bool Process(Pointer pointer, Ray ray, bool down, float scroll)
         {
             var canvas = App.Workspace.Canvas; var camera = canvas.worldCamera;
+            var data = pointer.data;
             if (camera == null) { Clear(pointer); return false; }
             var plane = new Plane(canvas.transform.forward, canvas.transform.position);
-            if (!plane.Raycast(ray, out float distance) || distance <= 0 || distance > 6) { ReleaseOutside(pointer, down); return false; }
+            if (!plane.Raycast(ray, out float distance) || distance <= 0 || distance > 6)
+            {
+                // A drag already under way must survive the ray leaving the canvas plane: the panel
+                // is in the hand now, and cancelling here restarts the drag on the next frame — that
+                // is the stutter "拖的一卡一卡". Keep feeding drag events; the handler reads the ray.
+                if (down && pointer.down && data.dragging && data.pointerDrag != null)
+                {
+                    _dragRays[data.pointerId] = ray;
+                    ExecuteEvents.Execute(data.pointerDrag, data, ExecuteEvents.dragHandler);
+                    pointer.down = down;
+                    return pointer.hover != null;
+                }
+                ReleaseOutside(pointer, down); return false;
+            }
             Vector3 worldPoint = ray.GetPoint(distance);
-            var data = pointer.data;
             data.position = camera.WorldToScreenPoint(worldPoint); data.delta = data.position - pointer.previous; pointer.previous = data.position;
             _hits.Clear(); canvas.GetComponent<GraphicRaycaster>().Raycast(data, _hits);
             var hit = _hits.Count > 0 ? _hits[0].gameObject : null;

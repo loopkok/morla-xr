@@ -73,7 +73,15 @@ Tools/transcribe_voice.ps1           ← Windows SAPI 兜底转写（精度很�
 10. **配置草稿与生效分离**：`ApplySettings` 先校验、再 `Session.Pause`、复制草稿、必要时重置 body 参考/视频/机器人；只有 `morla-settings.json` 不存在时才从 PlayerPrefs 迁移。改默认值不等于重置已安装设备。
 11. **MORLA 控制：accepted ≠ completed**：POST 返回 `ok=true` 只表示接收；必须用相同 Profile、operation_id、command，且 `phase=completed`、`result=true`、armed 状态吻合才确认（`MorlaControlSnapshot.Confirms`）。状态超过 2 s 未更新视为未知并暂停发送；**不自动重试**，网络恢复不自动 start。
 12. **视频面板尺寸由 FOV 动态推导**（`VideoPanelRenderer`）：改布局参数（`minimized*` 等）别写死像素，Quest FOV 与 PC 端 `size_multiplier` 都在起作用。
-13. **工作区按 3D 抓取移动，尺寸等视角放大**：`WorkspaceWindowDrag` 从 `WorkspacePointer.TryGetDragRay(pointerId)` 取**手上真实的世界射线**——uGUI 的拖动事件只带"射线与画布平面的交点"，丢了手的远近，只用 `PointerEventData.position` 推算深度就退回"只能在一个平面里拖"。抓取点取 `pointerCurrentRaycast.worldPosition`，`_grabOffset = 抓取点 − 手原点` 让它钉在手上；距离夹在 0.45–2.4 m，画布朝向按水平方向 billboard。`WorkspaceUIController.ScaleForDistance` 让缩放 ∝ 距眼距离（基准 `PlaceDistance=1.2 m` / `BaseCanvasScale=0.0009`，系数夹 0.5–2.0），所以远近视角大小不变、实际尺寸随距离变化；**位置必须按缩放后的抓取点反算**（`anchor − rotation × (grabLocal × scale)`），否则放大时会把你捏住的那个点从手指下滑走。`Recenter`、恢复保存位姿之后都要 `ApplyDistanceScale`。状态栏与设置标题栏都可抓；状态栏点击仍打开概览页（拖过 8 px 阈值 uGUI 自动取消 click）。
+13. **工作区按 3D 抓取移动**：`WorkspaceWindowDrag` 从 `WorkspacePointer.TryGetDragRay(pointerId)` 取**手上真实的世界射线**——uGUI 的拖动事件只带"射线与画布平面的交点"，丢了手的远近，只用 `PointerEventData.position` 推算深度就退回"只能在一个平面里拖"。抓取点取 `pointerCurrentRaycast.worldPosition`，记 `_grabDistance = |抓取点 − 手原点|`，之后 `anchor = ray.GetPoint(_grabDistance)`——**抓取点永远留在光标下**，手前后移动改变 anchor 距眼的远近。距离夹 0.45–2.4 m。
+
+    **朝向只能取偏航，不能取抓取点**：`FaceUser` 用 `ProjectOnPlane(camera.forward, up)`。之前用"head → anchor"算朝向，抓状态栏右端面板就往右倒、左端往左倒（真机反馈）。
+
+    **拖动中途射线离开画布平面不许打断**：`WorkspacePointer.Process` 在平面未命中时，若 `data.dragging` 已成立就继续派发 drag 事件（射线照旧写进 `_dragRays`）。否则每丢一次平面就 Release 再重新 pointerDown，重新过 8 px 阈值——表现就是"拖的一卡一卡"。
+
+    **远近大小两种口径**（`AppSettings.angularWindowScale`，设置页「拖远后的大小」）：默认 **false = 固定物理尺寸**，远处自然变小（Quest 系统界面的观感）；true = 等视角，缩放 ∝ 距眼距离（基准 `PlaceDistance=1.2 m` / `BaseCanvasScale=0.0009`，系数夹 0.5–2.0），远处实际变大、字始终清楚。两种模式都要按缩放后的抓取点反算位置（`anchor − rotation × (grabLocal × scale)`），否则缩放时抓取点会从光标下滑走。`Recenter`、恢复保存位姿之后都要 `ApplyDistanceScale`。
+
+    **抓取入口互斥**：`WorkspaceWindowDrag`（射线 + 扳机，状态栏/标题栏）与 `WorkspaceGrab`（侧键/☰ 搬运）不得同时写位姿——`WorkspaceGrab.Carrying` 且 `WorkspacePointer.IsDragging` 双向互斥，否则面板每帧被两边抢着摆，表现为抖动。状态栏点击仍打开概览页（拖过 8 px 阈值 uGUI 自动取消 click）。
 
     **手柄搬运**：`WorkspaceGrab` 让**按住侧键（握把，任意一只手）**或**长按 ☰ 0.45 s** 把整块工作区拿在手上（距离同样夹 0.45–2.4 m、等视角缩放、billboard）。☰ 归它管：**短按仍是开/关设置**，长按改成搬运并吞掉那次点击——所以 `AppManager.Update` 里不要再单独处理 `Button.Start`，否则一次按键会既开设置又抢搬运。只允许"该侧当前生效输入"的手柄搬运（`Tracking.ControllerActive`），桌上的手柄不会动面板。
 
