@@ -13,7 +13,7 @@
 - 修掉更早的四个真机问题：拖动一卡一卡（平面丢失不再中断拖动；侧键搬运与射线拖动互斥、侧键阈值 0.7）、抓取点不跟光标（改成沿射线固定距离锚定）。
 - 关键实现：uGUI 拖动事件只带"射线与画布平面的交点"，没有远近；`WorkspacePointer` 新增按 pointer id 缓存的 `TryGetDragRay`，把手的真实世界射线交给拖动处理器（鼠标无此路径，退回旧的平面拖动）。
 - 边界：距离 0.45–2.4 m、不低于眼睛下方 1 m、朝向始终看向用户；拖动仍先暂停发送（不变量 8），结束落盘位姿。概览页加了一行操作提示。
-- 静态编译（editor + android 两套 define）0 错误；**未在 Unity 真实编译、未重建 APK、未真机验收**，设备上的 1.1.0/8 不含本改动。详见[工作区 3D 拖动](docs/CHANGELOG_2026-10-29-workspace-depth-drag.md)。
+- 静态编译（editor + android 两套 define）0 错误；**未在 Unity 真实编译、未在真机验收这套最终源码**。仓库 APK 已更新为 15:24 的构建（含方向/倾斜/深度改动，不含最后一行 `scroll.inertia = false`，需重建才与源码完全一致）。详见[工作区 3D 拖动](docs/CHANGELOG_2026-10-29-workspace-depth-drag.md)，推送回执见[推送日志](docs/PUSH_LOG_2026-10-29-workspace-drag.md)。
 
 ## 2026-10-29 — APK 产物重建（1.1.0 / versionCode 8）
 
