@@ -66,3 +66,14 @@ MORLA HTTP采用8080独立端口，原8000位姿、8001语音、8765视频信令
 本轮提交包含全部已有源码改版、场景/版本设置、字体授权/资源、便携验证工具、设计/实现文档及本日志；旧APK保留。README增加同日复验入口，历史日志不删除。
 
 主内容提交后经SSH443和已配置本机代理推送main，再fetch核对SHA；实际回执保存 `docs/PUSH_LOG_2026-10-27.md`，单独提交该记录。不强推，不更改永久Git远端配置，不以推送成功替代APK交付或设备验收。
+
+## 工作区首次放置（进入即落到脚下）
+
+真机反馈：进入工作区时窗口出现在接近脚面的位置，必须点“回到面前”。根因是首次放置只做一次：`WorkspaceUIController.Update` 在第一帧就调用 `Recenter()` 并置 `_placed`。本场景相机为 FloorLevel（`Scene.unity` 中 `_trackingOriginType: 1`），XR 应用首个头部位姿之前 `CenterEyeAnchor` 仍停在 tracking space 原点，也就是地面；于是“眼前 1.2 m、下移 8 cm”实际落在脚下 1.2 m 处。旧的失联判定只看距离 > 2.5 m 或点在身后，脚下 1.2 m 两个条件都不满足，`_placed` 又已锁定，故整场不再自愈。另外 `HideSettings()` 会经 `SavePose()` 把这个地面位姿写进 `morla-settings.json`（`hasWindowPose`），而恢复只看距离 < 2.5 m，所以会每次启动复现。
+
+修法（`Assets/Scripts/WorkspaceUIController.cs`）：
+- 首次放置等待有效头部：`HeadPoseReady()` 要求头部源 250 ms 内有效，或眼锚已离开 tracking space 原点 > 20 cm（此时位姿必然已应用），不再在第一帧盲放。
+- 新增 `Reachable()`：距眼 ≤ 2.5 m 且不低于眼睛 1 m；失联自愈、保存位姿恢复、`SavePose()` 三处共用。低于眼睛 1 m 的位姿既不恢复也不再写入，已存在的错误存档无需手动删除，下一次放置即覆盖。
+- 失联自愈沿用 2 s 门槛与输入释放门，不改变“关闭设置不自动恢复发送”的既有行为。
+
+静态编译（Unity 自带 Roslyn，editor/player 两套宏，397 引用）0 错误，只剩既有的 CS0618/CS0649/CS0414 警告。未在 Unity 真实编译、未重建 APK、未做 Quest 真机验收。
