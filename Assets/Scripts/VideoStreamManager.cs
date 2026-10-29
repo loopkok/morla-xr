@@ -586,8 +586,11 @@ public class VideoStreamManager : MonoBehaviour
     private async void FailFatal(string reason)
     {
         if (_isStopping) return;
+        // An error that arrives after the session was torn down belongs to a stopped generation;
+        // reporting it would pause a telemetry session the user just restarted.
+        if (_state == SessionState.Idle) { LogInfo("ignored stale video error: " + reason); return; }
         statsOverlay?.SetError(reason);
-        if (_state != SessionState.Idle) await StopVideoSession("video_error");
+        await StopVideoSession("video_error");
         AppManager.Instance?.VideoFault(reason);
     }
 
@@ -606,7 +609,7 @@ public class VideoStreamManager : MonoBehaviour
                 bool trackStale = !_frameTimes.TryGetValue(i, out long frame) || QuestPacketEnvelope.MonotonicUs() - frame > 750000;
                 _panels[i]?.SetStatus(trackStale ? "画面已中断 · 非实时画面" : "");
             }
-            if (stale && app.Settings.criticalVideo && app.Session.Requested) app.Session.Pause("必要相机画面已中断");
+            if (stale && app.Settings.videoEnabled && app.Settings.criticalVideo && app.Session.Requested) app.Session.Pause("必要相机画面已中断");
         }
         else if (Time.unscaledTime - _startedAt > 12) { FailFatal("等待视频首帧超时"); return; }
         else app.Status.video = MediaState.WaitingFrame;

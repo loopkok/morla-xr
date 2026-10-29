@@ -187,9 +187,12 @@ namespace MORLA.XR
         }
         public async void StartVideo()
         {
+            // Record the intent first so a configuration fault below is reported instead of being
+            // discarded as a message from a video session the user has switched off.
+            Settings.videoEnabled = true; SaveSettings();
             if (_video == null) { VideoFault("场景缺少视频服务"); return; }
             if (!AppSettings.ValidHost(Settings.VideoHost)) { VideoFault("请为视频配置单播主机地址"); return; }
-            Settings.videoEnabled = true; SaveSettings(); Status.video = MediaState.Connecting;
+            Status.video = MediaState.Connecting;
             try { await _video.StartVideoSession(Settings.VideoHost, Settings.videoPort, "720p30", ShowDiagnostics); }
             catch (Exception ex) { await _video.StopVideoSession("start_error"); VideoFault(ex.Message); }
         }
@@ -197,10 +200,25 @@ namespace MORLA.XR
         {
             if (_video != null) await _video.StopVideoSession("user_stop"); Status.video = MediaState.Off;
         }
+        /// <summary>
+        /// Stops video and remembers the choice. Without clearing <see cref="AppSettings.videoEnabled"/>
+        /// the next RequestStart silently restarts the session the user just turned off, and a failed
+        /// signaling handshake would pause telemetry again.
+        /// </summary>
+        public void DisableVideo()
+        {
+            if (Settings.videoEnabled) { Settings.videoEnabled = false; SaveSettings(); if (Workspace != null) Workspace.RefreshSettings(); }
+            StopVideo();
+        }
         public void VideoFault(string error)
         {
+            // A session the user switched off must not leave a permanent "视频异常" on the HUD.
+            if (!Settings.videoEnabled) { Notify("视频异常（视频接收已关闭，已忽略）：" + error); return; }
             Status.video = MediaState.Faulted; Status.videoMessage = error;
-            if (Settings.criticalVideo && Session != null && Session.Requested) Session.Pause("必要相机不可用：" + error);
+            // Only an enabled, required camera may stop telemetry. A late fault from a session the
+            // user already disabled must not cancel a fresh 恢复发送.
+            if (Settings.videoEnabled && Settings.criticalVideo && Session != null && Session.Requested)
+                Session.Pause("必要相机不可用：" + error + "（可在「视频与显示」关闭「主相机为必要视角」）");
         }
         public void DisconnectHost()
         {

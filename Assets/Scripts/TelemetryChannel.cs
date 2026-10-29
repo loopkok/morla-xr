@@ -92,13 +92,43 @@ namespace MORLA.XR
                     { Volatile.Write(ref _writesMilliHz, (int)(_rateCount * 1000000000L / (now - _rateStart))); _rateStart = now; _rateCount = 0; }
                 }
             }
-            catch (Exception ex) { if (_running) _fault(ex.GetBaseException().Message); }
+            catch (Exception ex) { if (_running) _fault(Describe(ex.GetBaseException())); }
             finally
             {
                 _connected = false;
                 try { _tcp?.Close(); _udp?.Close(); } catch (SocketException) { }
                 lock (_sync) { _running = false; _latest = null; _wake.Dispose(); }
             }
+        }
+        /// <summary>
+        /// Mono on Android reports raw errno text ("mono-io-layer-error(111)"), which tells the user
+        /// nothing. Say what was contacted and what usually causes it.
+        /// </summary>
+        private string Describe(Exception error)
+        {
+            string endpoint = _host + ":" + _port;
+            string hint = _protocol == 1
+                ? "主机侧接收器需先启动，并在主机执行 adb reverse tcp:" + _port + " tcp:" + _port
+                : "主机侧接收器需先启动，并放行端口 " + _port;
+            if (error is TimeoutException) return "连接超时：" + endpoint + "（" + hint + "）";
+            var socket = error as SocketException;
+            if (socket != null)
+            {
+                switch (socket.SocketErrorCode)
+                {
+                    case SocketError.ConnectionRefused: return "连接被拒绝：" + endpoint + " 没有接收端（" + hint + "）";
+                    case SocketError.HostNotFound:
+                    case SocketError.NoData: return "找不到主机 " + _host + "：检查地址与局域网";
+                    case SocketError.HostUnreachable:
+                    case SocketError.NetworkUnreachable: return "网络不可达：" + _host + "（检查 Wi-Fi / USB 转发）";
+                    case SocketError.ConnectionReset: return "主机重置了连接：" + endpoint;
+                    case SocketError.TimedOut: return "连接超时：" + endpoint + "（" + hint + "）";
+                }
+                // errno 111 is ECONNREFUSED; Mono sometimes surfaces it only in the text.
+                if (error.Message.Contains("111")) return "连接被拒绝：" + endpoint + " 没有接收端（" + hint + "）";
+                return error.Message + " → " + endpoint + "（" + hint + "）";
+            }
+            return error.Message;
         }
         private void OnUdp(IAsyncResult result)
         {

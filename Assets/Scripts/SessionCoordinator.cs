@@ -41,6 +41,12 @@ namespace MORLA.XR
         public void Fail(string reason)
         { Pause(reason); var status = AppManager.Instance.Status; status.telemetry = TelemetryState.Faulted; status.error = reason; }
         public void Disconnect() { _voiceRequested = false; Requested = false; _canSend = false; }
+        // The required-camera gate must say what actually blocks it: a hidden panel is a layout
+        // choice, not a missing frame.
+        private static string VideoNotice(AppManager app) =>
+            app.Settings.videoLayout == VideoLayout.Hidden
+                ? "必要视角已隐藏：显示主画面，或在「视频与显示」关闭「主相机为必要视角」"
+                : "等待必要相机首帧；可在「视频与显示」调整策略或停止视频接收";
         private void Update()
         {
             var app = AppManager.Instance; if (!Requested) return;
@@ -55,8 +61,9 @@ namespace MORLA.XR
             bool videoReady = !app.Settings.videoEnabled || !app.Settings.criticalVideo || app.Status.video == MediaState.Playing && app.Settings.videoLayout != VideoLayout.Hidden;
             if (!ready || !videoReady)
             {
-                if (_canSend || _wasSending) { Pause(!ready ? reason : "必要相机画面不可用"); return; }
-                app.Status.notice = !ready ? reason : "等待必要相机首帧；可在显示设置中调整策略";
+                string blocked = ready ? VideoNotice(app) : reason;
+                if (_canSend || _wasSending) { Pause(blocked); return; }
+                app.Status.notice = blocked;
                 if (Time.unscaledTime - _requestedAt > 15) Fail("准备超时：" + app.Status.notice);
                 return;
             }
