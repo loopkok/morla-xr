@@ -34,7 +34,7 @@ VoiceAudioStreamer.cs      ← 语音：opt-in 麦克风上行（TCP 8001，16kH
 WorkspaceUIController.cs   ← 透视工作区：工具栏、六页设置、窗口；运行时用 UiKit 组装，不依赖场景 UI 引用
 UiKit.cs                   ← 原生 uGUI 控件工厂与统一样式
 WorkspacePointer.cs        ← 手柄射线 / 手部捏合 → uGUI 事件；输入释放门（替代旧 ControllerMenuPointer）
-WorkspaceWindowDrag.cs     ← 设置窗口拖动/回到面前
+WorkspaceWindowDrag.cs     ← 工作区 3D 抓取拖动（状态栏/标题栏）：跟手改远近 + 等视角缩放，鼠标退回平面拖动
 WorkspaceIcon.cs / MorlaTextStyle.cs ← 图标绘制 / 字体样式
 MorlaRobotClient.cs        ← MORLA HTTP 8080：状态轮询、pause/start、operation_id 回执关联、不自动重试
 MorlaControlSnapshot.cs    ← /api/v1/state 严格解析与 Confirms 判定
@@ -72,6 +72,7 @@ Tools/transcribe_voice.ps1           ← Windows SAPI 兜底转写（精度很�
 10. **配置草稿与生效分离**：`ApplySettings` 先校验、再 `Session.Pause`、复制草稿、必要时重置 body 参考/视频/机器人；只有 `morla-settings.json` 不存在时才从 PlayerPrefs 迁移。改默认值不等于重置已安装设备。
 11. **MORLA 控制：accepted ≠ completed**：POST 返回 `ok=true` 只表示接收；必须用相同 Profile、operation_id、command，且 `phase=completed`、`result=true`、armed 状态吻合才确认（`MorlaControlSnapshot.Confirms`）。状态超过 2 s 未更新视为未知并暂停发送；**不自动重试**，网络恢复不自动 start。
 12. **视频面板尺寸由 FOV 动态推导**（`VideoPanelRenderer`）：改布局参数（`minimized*` 等）别写死像素，Quest FOV 与 PC 端 `size_multiplier` 都在起作用。
+13. **工作区按 3D 抓取移动，尺寸等视角放大**：`WorkspaceWindowDrag` 从 `WorkspacePointer.TryGetDragRay(pointerId)` 取**手上真实的世界射线**——uGUI 的拖动事件只带"射线与画布平面的交点"，丢了手的远近，只用 `PointerEventData.position` 推算深度就退回"只能在一个平面里拖"。抓取点取 `pointerCurrentRaycast.worldPosition`，`_grabOffset = 抓取点 − 手原点` 让它钉在手上；距离夹在 0.45–2.4 m，画布朝向按水平方向 billboard。`WorkspaceUIController.ScaleForDistance` 让缩放 ∝ 距眼距离（基准 `PlaceDistance=1.2 m` / `BaseCanvasScale=0.0009`，系数夹 0.5–2.0），所以远近视角大小不变、实际尺寸随距离变化；**位置必须按缩放后的抓取点反算**（`anchor − rotation × (grabLocal × scale)`），否则放大时会把你捏住的那个点从手指下滑走。`Recenter`、恢复保存位姿之后都要 `ApplyDistanceScale`。状态栏与设置标题栏都可抓；状态栏点击仍打开概览页（拖过 8 px 阈值 uGUI 自动取消 click）。
 
 ## 已解决的坑（症状 → 根因 → 现有防护）
 

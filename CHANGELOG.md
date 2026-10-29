@@ -2,6 +2,14 @@
 
 日期使用Asia/Shanghai。历史版本说明继续保留于README；源码版本、APK产物和设备验收分别记录。
 
+## 2026-10-29 — 工作区 3D 拖动（远近 + 等视角缩放）
+
+- 整块工作区不再只能在一个固定平面上拖：抓住状态栏或设置标题栏后，**面板黏在手上**，手朝怀里收即拉近、前推即推远，横向/纵向同时跟手（`WorkspaceWindowDrag`）。
+- 缩放与距眼距离成正比（`ScaleForDistance`，基准 1.2 m / 0.0009，系数夹 0.5–2.0）：**远近视角大小不变**，越远实际越大、字始终清楚。抓取点按缩放反算，放大时不会从手指下滑走。
+- 关键实现：uGUI 拖动事件只带"射线与画布平面的交点"，没有远近；`WorkspacePointer` 新增按 pointer id 缓存的 `TryGetDragRay`，把手的真实世界射线交给拖动处理器（鼠标无此路径，退回旧的平面拖动）。
+- 边界：距离 0.45–2.4 m、不低于眼睛下方 1 m、按水平方向 billboard 正对你；拖动仍先暂停发送（不变量 8），结束落盘位姿。概览页加了一行操作提示。
+- 静态编译（editor + android 两套 define）0 错误；**未在 Unity 真实编译、未重建 APK、未真机验收**，设备上的 1.1.0/8 不含本改动。详见[工作区 3D 拖动](docs/CHANGELOG_2026-10-29-workspace-depth-drag.md)。
+
 ## 2026-10-29 — APK 产物重建（1.1.0 / versionCode 8）
 
 - 仓库内 `MORLA-XR.apk` 由 `1.0.0 / versionCode 7`（93,835,522 字节）更新为新构建 `1.1.0 / versionCode 8`（101,813,202 字节）。`aapt dump badging`：`com.loopkok.morlaxr`、`versionCode='8'`、`versionName='1.1.0'`、minSdk 32 / targetSdk 33。
