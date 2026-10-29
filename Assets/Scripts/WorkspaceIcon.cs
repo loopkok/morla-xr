@@ -14,7 +14,7 @@ namespace MORLA.XR
             if (kind == Kind.Play)
             { Line(mesh, new Vector2(-9, -13), new Vector2(12, 0)); Line(mesh, new Vector2(12, 0), new Vector2(-9, 13)); Line(mesh, new Vector2(-9, 13), new Vector2(-9, -13)); }
             else if (kind == Kind.Pause)
-            { Line(mesh, new Vector2(-6, -13), new Vector2(-6, 13), 5); Line(mesh, new Vector2(6, -13), new Vector2(6, 13), 5); }
+            { Line(mesh, new Vector2(-6, -13), new Vector2(-6, 13), 4.5f); Line(mesh, new Vector2(6, -13), new Vector2(6, 13), 4.5f); }
             else if (kind == Kind.Camera)
             {
                 Line(mesh, new Vector2(-15, -10), new Vector2(4, -10)); Line(mesh, new Vector2(4, -10), new Vector2(4, 10));
@@ -47,7 +47,7 @@ namespace MORLA.XR
                 Line(mesh, center + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * radius, center + new Vector2(Mathf.Cos(b), Mathf.Sin(b)) * radius);
             }
         }
-        private void Line(VertexHelper mesh, Vector2 from, Vector2 to, float thickness = 2.5f)
+        private void Line(VertexHelper mesh, Vector2 from, Vector2 to, float thickness = 2.2f)
         {
             Vector2 direction = (to - from).normalized; Vector2 normal = new Vector2(-direction.y, direction.x) * thickness * 0.5f;
             int start = mesh.currentVertCount;

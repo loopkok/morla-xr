@@ -16,8 +16,9 @@ namespace MORLA.XR
         public bool SettingsVisible => _settings != null && _settings.gameObject.activeSelf;
         public bool OnboardingVisible => _onboarding != null && _onboarding.gameObject.activeSelf;
         public bool PointerOverUi { get; set; }
-        private RectTransform _settings, _page, _onboarding, _toolbar;
+        private RectTransform _settings, _page, _onboarding, _toolbar, _noticeBack;
         private TMP_Text _statusText, _noticeText, _sendLabel, _micLabel, _videoLabel;
+        private Image _statusDot, _micFill, _videoFill;
         private AppSettings _draft;
         private string _draftBaseline;
         private int _selected;
@@ -57,43 +58,64 @@ namespace MORLA.XR
             Canvas.worldCamera = Camera.main; Canvas.sortingOrder = 100;
             var rect = (RectTransform)Canvas.transform; rect.sizeDelta = new Vector2(1100, 1100);
             rect.localScale = Vector3.one * 0.0009f;
-            _statusText = UiKit.Text(rect, "StatusStrip", "MORLA XR", 25, new Vector2(0, 425), new Vector2(1020, 90));
-            _statusText.alignment = TextAlignmentOptions.Center;
-            _statusText.raycastTarget = true;
-            var statusButton = _statusText.gameObject.AddComponent<Button>(); statusButton.targetGraphic = _statusText;
-            statusButton.transition = Selectable.Transition.None; statusButton.onClick.AddListener(() => ShowSettings(0));
-            _noticeText = UiKit.Text(rect, "Notice", "", 24, new Vector2(0, -355), new Vector2(1000, 100));
-            _noticeText.alignment = TextAlignmentOptions.Center;
+            // Status bar: translucent chrome that opens the overview page when clicked.
+            var statusBar = UiKit.Panel(rect, "StatusBar", new Vector2(0, 425), new Vector2(1000, 88), UiKit.Window, 24);
+            UiKit.Shadow(statusBar, 10);
+            var statusHit = statusBar.GetComponent<Image>(); statusHit.raycastTarget = true;
+            var statusButton = statusBar.gameObject.AddComponent<Button>(); statusButton.targetGraphic = statusHit;
+            var statusColors = statusButton.colors;
+            statusColors.normalColor = new Color(0.92f, 0.92f, 0.92f, 1f); statusColors.highlightedColor = Color.white;
+            statusColors.pressedColor = new Color(0.80f, 0.80f, 0.80f, 1f);
+            statusColors.fadeDuration = App.Settings.reduceMotion ? 0 : 0.1f;
+            statusButton.colors = statusColors; statusButton.onClick.AddListener(() => ShowSettings(0));
+            _statusDot = UiKit.Dot(statusBar, "StatusDot", new Vector2(-462, 0), 14, UiKit.Secondary).GetComponent<Image>();
+            _statusText = UiKit.Text(statusBar, "StatusStrip", "MORLA XR", 24, new Vector2(10, 0), new Vector2(920, 84), UiKit.Ink, TextAlignmentOptions.Center);
+            _noticeBack = UiKit.Panel(rect, "NoticeBack", new Vector2(0, -355), new Vector2(860, 96), new Color(0.09f, 0.09f, 0.10f, 0.80f), 22);
+            _noticeBack.gameObject.SetActive(false);
+            _noticeText = UiKit.Text(rect, "Notice", "", 24, new Vector2(0, -355), new Vector2(1000, 100), UiKit.Ink, TextAlignmentOptions.Center);
             _pauseRobot = UiKit.Button(rect, "PauseFollow", "暂停跟随", new Vector2(340, -365), new Vector2(245, 62), () => App.Robot.RequestPause());
             _pauseRobot.gameObject.SetActive(false);
-            _toolbar = UiKit.Panel(rect, "Toolbar", new Vector2(0, -465), new Vector2(850, 92));
-            var send = UiKit.Button(_toolbar, "Send", "开始发送", new Vector2(-310, 0), new Vector2(210, 70), () =>
-            { if (App.Session.Requested) App.Session.Pause("位姿发送已暂停"); else { HideSettings(); App.Session.RequestStart(); } }, true);
+            _toolbar = UiKit.Panel(rect, "Toolbar", new Vector2(0, -465), new Vector2(800, 92), UiKit.Window, 28);
+            UiKit.Shadow(_toolbar, 14);
+            var send = UiKit.Button(_toolbar, "Send", "开始发送", new Vector2(-270, 0), new Vector2(200, 66), () =>
+            { if (App.Session.Requested) App.Session.Pause("位姿发送已暂停"); else { HideSettings(); App.Session.RequestStart(); } }, true, true);
             _sendLabel = send.GetComponentInChildren<TMP_Text>();
             _sendIcon = UiKit.AddToolbarIcon(send, WorkspaceIcon.Kind.Play);
-            var video = UiKit.Button(_toolbar, "Video", "视频", new Vector2(-100, 0), new Vector2(170, 70), () =>
+            var video = UiKit.Button(_toolbar, "Video", "视频", new Vector2(-80, 0), new Vector2(160, 66), () =>
             { if (App.Status.video == MediaState.Off || App.Status.video == MediaState.Faulted) App.StartVideo(); else ShowSettings(3); });
             _videoLabel = video.GetComponentInChildren<TMP_Text>();
+            _videoFill = video.GetComponent<Image>();
             UiKit.AddToolbarIcon(video, WorkspaceIcon.Kind.Camera);
-            var mic = UiKit.Button(_toolbar, "Microphone", "麦克风", new Vector2(90, 0), new Vector2(180, 70), () => App.SetVoiceEnabled(!App.VoiceSessionEnabled));
+            var mic = UiKit.Button(_toolbar, "Microphone", "麦克风", new Vector2(95, 0), new Vector2(170, 66), () => App.SetVoiceEnabled(!App.VoiceSessionEnabled));
             _micLabel = mic.GetComponentInChildren<TMP_Text>();
+            _micFill = mic.GetComponent<Image>();
             _micIcon = UiKit.AddToolbarIcon(mic, WorkspaceIcon.Kind.Microphone);
-            var settingsButton = UiKit.Button(_toolbar, "Settings", "设置", new Vector2(295, 0), new Vector2(190, 70), ToggleSettings);
+            var settingsButton = UiKit.Button(_toolbar, "Settings", "设置", new Vector2(280, 0), new Vector2(180, 66), ToggleSettings);
             UiKit.AddToolbarIcon(settingsButton, WorkspaceIcon.Kind.Settings);
-            _settings = UiKit.Panel(rect, "SettingsWindow", new Vector2(0, 20), new Vector2(1000, 680));
-            var title = UiKit.Text(_settings, "Title", "MORLA XR   设置", 34, new Vector2(-30, 290), new Vector2(890, 70));
-            title.raycastTarget = true;
-            title.gameObject.AddComponent<WorkspaceWindowDrag>().target = transform;
-            UiKit.Button(_settings, "Close", "×", new Vector2(445, 292), new Vector2(66, 62), HideSettings);
-            var sidebar = UiKit.Panel(_settings, "Sidebar", new Vector2(-360, -10), new Vector2(240, 530), UiKit.Subtle);
+            _settings = UiKit.Panel(rect, "SettingsWindow", new Vector2(0, -5), new Vector2(1000, 680), UiKit.Window, UiKit.WindowRadius);
+            UiKit.Shadow(_settings, 24);
+            var titleBar = UiKit.Panel(_settings, "TitleBar", new Vector2(0, 301), new Vector2(1000, 78), UiKit.Clear, UiKit.WindowRadius, false);
+            titleBar.GetComponent<Image>().raycastTarget = true;
+            titleBar.gameObject.AddComponent<WorkspaceWindowDrag>().target = transform;
+            UiKit.Text(_settings, "Title", "MORLA XR 设置", 30, new Vector2(-140, 301), new Vector2(560, 70), UiKit.Ink, TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
+            var close = UiKit.Panel(_settings, "Close", new Vector2(-452, 302), new Vector2(64, 64), UiKit.Clear, 32, false);
+            var closeHit = close.GetComponent<Image>(); closeHit.raycastTarget = true;
+            var closeButton = close.gameObject.AddComponent<Button>(); closeButton.targetGraphic = closeHit;
+            closeButton.transition = Selectable.Transition.None; closeButton.onClick.AddListener(HideSettings);
+            UiKit.Dot(close, "Light", Vector2.zero, 26, UiKit.Danger);
+            UiKit.Text(close, "Glyph", "×", 18, Vector2.zero, new Vector2(26, 26), new Color(0.42f, 0.03f, 0.02f, 1f), TextAlignmentOptions.Center, FontStyles.Bold);
+            UiKit.Divider(_settings, 0, 262, 1000);
+            var sidebar = UiKit.Panel(_settings, "Sidebar", new Vector2(-360, 0), new Vector2(240, 500), new Color(1f, 1f, 1f, 0.04f), 18);
             for (int i = 0; i < Pages.Length; i++)
             {
                 int index = i;
-                _navigation.Add(UiKit.Button(sidebar, "Page" + i, Pages[i], new Vector2(0, 215 - i * 77), new Vector2(220, 65), () => SelectPage(index)));
+                _navigation.Add(UiKit.QuietButton(sidebar, "Page" + i, Pages[i], new Vector2(0, 170 - i * 68), new Vector2(216, 60), () => SelectPage(index)));
             }
-            _page = UiKit.ScrollPage(_settings, new Vector2(130, 10), new Vector2(690, 510));
-            UiKit.Button(_settings, "Recenter", "回到面前", new Vector2(-350, -295), new Vector2(210, 60), Recenter);
-            UiKit.Button(_settings, "Apply", "应用并保存", new Vector2(330, -295), new Vector2(250, 60), () =>
+            _page = UiKit.ScrollPage(_settings, new Vector2(130, 0), new Vector2(690, 500));
+            UiKit.Divider(_settings, -238, 0, 500, true);
+            UiKit.Divider(_settings, 0, -258, 1000);
+            UiKit.Button(_settings, "Recenter", "回到面前", new Vector2(-350, -298), new Vector2(210, 58), Recenter);
+            UiKit.Button(_settings, "Apply", "应用并保存", new Vector2(330, -298), new Vector2(250, 58), () =>
             { EventSystem.current?.SetSelectedGameObject(null); if (App.ApplySettings(_draft)) App.Notify("配置已保存；关闭设置后可恢复发送"); }, true);
             _settings.gameObject.SetActive(false);
             _draft = App.Settings.Copy(); _draftBaseline = JsonUtility.ToJson(_draft);
@@ -105,27 +127,32 @@ namespace MORLA.XR
         { yield return new WaitForEndOfFrame(); App.MarkStartup("workspace_first_rendered_frame"); }
         private void BuildOnboarding(RectTransform parent)
         {
-            _onboarding = UiKit.Panel(parent, "ConnectMORLA", Vector2.zero, new Vector2(730, 540));
-            UiKit.Text(_onboarding, "Welcome", "连接 MORLA", 36, new Vector2(0, 205), new Vector2(650, 70));
-            UiKit.Text(_onboarding, "Description", "选择连接方式，或先进入透视工作区。", 25, new Vector2(0, 140), new Vector2(650, 55));
+            _onboarding = UiKit.Panel(parent, "ConnectMORLA", Vector2.zero, new Vector2(730, 540), UiKit.Window, 24);
+            UiKit.Shadow(_onboarding, 20);
+            UiKit.Text(_onboarding, "Welcome", "连接 MORLA", 34, new Vector2(0, 202), new Vector2(650, 62), UiKit.Ink, TextAlignmentOptions.Center, FontStyles.Bold);
+            UiKit.Text(_onboarding, "Description", "选择连接方式，或先进入透视工作区。", 24, new Vector2(0, 146), new Vector2(650, 50), UiKit.Secondary, TextAlignmentOptions.Center);
             TMP_InputField host = null;
             string[] modes = { "UDP", "USB / ADB", "局域网 TCP" };
-            for (int i = 0; i < modes.Length; i++)
+            var modeHost = UiKit.Rect(_onboarding, "ProtocolModes", new Vector2(0, 76), new Vector2(650, 56));
+            Action renderModes = null;
+            renderModes = () =>
             {
-                int protocol = i;
-                UiKit.Button(_onboarding, "Protocol" + i, modes[i], new Vector2(-220 + 220 * i, 76), new Vector2(210, 62), () =>
+                foreach (Transform child in modeHost) { child.gameObject.SetActive(false); Destroy(child.gameObject); }
+                UiKit.Segmented(modeHost, Vector2.zero, new Vector2(650, 56), modes, _draft.protocol, protocol =>
                 {
                     _draft.SelectProtocol(protocol);
                     if (protocol == 0) { _draft.videoEnabled = false; _draft.voiceEnabled = false; }
                     host.SetTextWithoutNotify(_draft.host);
                     App.Notify(protocol == 1 ? "USB 请在主机配置 ADB 转发" : "连接方式：" + modes[protocol]);
+                    renderModes();
                 });
-            }
-            UiKit.Text(_onboarding, "HostLabel", "主机地址", 24, new Vector2(0, 17), new Vector2(650, 38));
+            };
+            renderModes();
+            UiKit.Text(_onboarding, "HostLabel", "主机地址", 22, new Vector2(0, 17), new Vector2(650, 36), UiKit.Secondary);
             host = UiKit.Input(_onboarding, _draft.host, value => _draft.host = value, false);
             ((RectTransform)host.transform.parent).anchoredPosition = new Vector2(0, -34);
-            UiKit.Text(_onboarding, "PortHint", "默认位姿端口：TCP 8000 / UDP 9000；更多参数可在设置中调整。", 23, new Vector2(0, -101), new Vector2(650, 70));
-            UiKit.Button(_onboarding, "Connect", "连接", new Vector2(-165, -175), new Vector2(290, 65), () =>
+            UiKit.Text(_onboarding, "PortHint", "默认位姿端口：TCP 8000 / UDP 9000；更多参数可在设置中调整。", 22, new Vector2(0, -101), new Vector2(650, 66), UiKit.Secondary);
+            UiKit.Button(_onboarding, "Connect", "连接", new Vector2(-165, -175), new Vector2(290, 62), () =>
             {
                 EventSystem.current?.SetSelectedGameObject(null);
                 if (!App.ApplySettings(_draft)) return;
@@ -134,7 +161,7 @@ namespace MORLA.XR
                 if (App.Settings.videoEnabled) App.StartVideo();
                 App.Notify("配置已保存；点击开始发送，或先观察视频");
             }, true);
-            UiKit.Button(_onboarding, "Later", "稍后设置", new Vector2(165, -175), new Vector2(290, 65), CompleteOnboarding);
+            UiKit.Button(_onboarding, "Later", "稍后设置", new Vector2(165, -175), new Vector2(290, 62), CompleteOnboarding);
             UiKit.Button(_onboarding, "More", "更多设置", new Vector2(0, -237), new Vector2(290, 46), () => { CompleteOnboarding(); ShowSettings(1); });
         }
         private void CompleteOnboarding()
@@ -155,34 +182,23 @@ namespace MORLA.XR
         {
             _selected = index; _live.Clear();
             foreach (Transform child in _page) { child.gameObject.SetActive(false); Destroy(child.gameObject); }
-            for (int i = 0; i < _navigation.Count; i++) _navigation[i].GetComponent<Image>().color = i == index ? UiKit.Selected : UiKit.Surface;
+            for (int i = 0; i < _navigation.Count; i++) UiKit.SetSelected(_navigation[i], i == index);
             Heading(Pages[index]);
             if (index == 0) Overview(); else if (index == 1) Connection(); else if (index == 2) Tracking();
             else if (index == 3) Display(); else if (index == 4) Voice(); else Diagnostics();
             _page.anchoredPosition = Vector2.zero;
         }
-        private void Heading(string value) => UiKit.FlowText(_page, value, 36, 66);
-        private void Note(string value) => UiKit.FlowText(_page, value, 24, 90);
+        private void Heading(string value) => UiKit.FlowText(_page, value, 32, 62, UiKit.Ink, FontStyles.Bold);
+        private void Note(string value) => UiKit.FlowText(_page, value, 22, 92, UiKit.Secondary);
         private void Action(string label, Action action, bool primary = false) => UiKit.FlowButton(_page, label, action, primary);
-        private void Toggle(string label, Func<bool> get, Action<bool> set)
-        {
-            var button = UiKit.FlowButton(_page, "", () => { set(!get()); SelectPage(_selected); });
-            button.GetComponentInChildren<TMP_Text>().text = label + "    " + (get() ? "开启" : "关闭");
-        }
+        private void Toggle(string label, Func<bool> get, Action<bool> set) => UiKit.SwitchRow(_page, label, get(), value => { set(value); SelectPage(_selected); });
         private void Choices(string label, string[] labels, int selected, Action<int> set)
         {
-            UiKit.FlowText(_page, label, 27, 48);
-            var row = UiKit.FlowRect(_page, "ChoiceRow", 66);
-            float width = 650f / labels.Length;
-            for (int i = 0; i < labels.Length; i++)
-            {
-                int value = i;
-                var button = UiKit.Button(row, "Choice" + i, labels[i], new Vector2(-325 + width * (i + 0.5f), 0), new Vector2(width - 8, 62), () => { set(value); SelectPage(_selected); });
-                button.GetComponent<Image>().color = selected == i ? UiKit.Selected : UiKit.Subtle;
-            }
+            UiKit.FlowText(_page, label, 22, 40, UiKit.Secondary);
+            UiKit.SegmentedRow(_page, labels, selected, value => { set(value); SelectPage(_selected); });
         }
         private void Field(string label, string value, Action<string> change, bool numeric = false)
-        { UiKit.FlowText(_page, label, 26, 46); UiKit.Input(_page, value, change, numeric); }
+        { UiKit.FlowText(_page, label, 22, 38, UiKit.Secondary); UiKit.Input(_page, value, change, numeric); }
         private void Overview()
         {
             Note("Quest 3 · 主机 " + App.ServerIP + ":" + App.ServerPort + "\n本地追踪独立运行；设置交互时暂停位姿发送。");
@@ -248,7 +264,7 @@ namespace MORLA.XR
         {
             Toggle("视频接收", () => _draft.videoEnabled, value => _draft.videoEnabled = value);
             Action("立即开始视频观察", App.StartVideo);
-            Action("停止视频接收", App.StopVideo);
+            Action("停止视频接收", App.DisableVideo);
             Choices("画面显示", new[] { "主画面", "缩略", "隐藏" }, (int)_draft.videoLayout, value => _draft.videoLayout = (VideoLayout)value);
             var video = FindFirstObjectByType<VideoStreamManager>();
             if (video != null)
@@ -319,11 +335,12 @@ namespace MORLA.XR
         private void Update()
         {
             if (Canvas == null || App == null) return;
-            if (!_placed && Camera.main != null) { Recenter(); _placed = true; }
+            if (!_placed && Camera.main != null && HeadPoseReady()) { Recenter(); _placed = true; }
             if (_placed && Camera.main != null && !App.Session.Requested && !SettingsVisible && !OnboardingVisible)
             {
-                var offset = transform.position - Camera.main.transform.position;
-                bool inaccessible = offset.magnitude > 2.5f || Vector3.Dot(Camera.main.transform.forward, offset.normalized) < -0.2f;
+                Transform head = Camera.main.transform;
+                var offset = transform.position - head.position;
+                bool inaccessible = !Reachable(transform.position, head.position) || Vector3.Dot(head.forward, offset.normalized) < -0.2f;
                 if (inaccessible && WorkspacePointer.InputsReleased() && !PointerOverUi)
                 {
                     if (_outOfViewSince < 0) _outOfViewSince = Time.unscaledTime;
@@ -336,16 +353,30 @@ namespace MORLA.XR
             _pauseRobot.gameObject.SetActive(status.robotFresh && status.robotFollowing && !SettingsVisible);
             _noticeText.rectTransform.sizeDelta = new Vector2(_pauseRobot.gameObject.activeSelf ? 700 : 1000, 100);
             _noticeText.rectTransform.anchoredPosition = new Vector2(_pauseRobot.gameObject.activeSelf ? -140 : 0, -355);
+            _statusDot.color = status.telemetry == TelemetryState.Sending ? UiKit.Success :
+                status.telemetry == TelemetryState.Faulted ? UiKit.Danger :
+                status.telemetry == TelemetryState.Connecting ? UiKit.Warning :
+                status.telemetry == TelemetryState.Paused ? new Color(1f, 0.62f, 0.04f, 1f) : UiKit.Secondary;
+            _micFill.color = status.voiceRecording ? new Color(1f, 0.27f, 0.23f, 0.32f) : UiKit.Subtle;
+            _videoFill.color = status.video == MediaState.Playing ? new Color(0.04f, 0.52f, 1f, 0.32f) :
+                status.video == MediaState.Faulted || status.video == MediaState.Stale ? new Color(1f, 0.27f, 0.23f, 0.28f) : UiKit.Subtle;
             _sendLabel.text = App.Session.Requested ? "暂停发送" : status.telemetry == TelemetryState.Paused ? "恢复发送" : "开始发送";
             _sendIcon.SetKind(App.Session.Requested ? WorkspaceIcon.Kind.Pause : WorkspaceIcon.Kind.Play);
             _micLabel.text = status.voiceRecording ? "录音中" : status.voice == MediaState.PermissionRequired ? "待授权" : "麦克风";
-            _micIcon.color = status.voiceRecording ? UiKit.Blue : UiKit.Ink;
+            _micIcon.color = status.voiceRecording ? UiKit.Danger : UiKit.Ink;
             _videoLabel.text = status.video == MediaState.Faulted || status.video == MediaState.Stale ? "视频异常" : "视频";
             _statusText.text = "MORLA XR    位姿：" + status.TelemetryLabel + "    机器人：" + status.robot +
                 "\n左：" + App.Status.sources["left"].source + "    右：" + App.Status.sources["right"].source;
             _noticeText.text = status.error.Length > 0 ? status.error : status.notice;
             if (status.video == MediaState.Faulted && status.error.Length == 0) _noticeText.text = "视频异常：" + status.videoMessage;
             if (status.voiceRecording) _noticeText.text += "\n麦克风正在使用 · " + status.feedback;
+            bool notice = _noticeText.text.Length > 0;
+            _noticeBack.gameObject.SetActive(notice);
+            if (notice)
+            {
+                _noticeBack.sizeDelta = new Vector2(_noticeText.rectTransform.sizeDelta.x - 120, 96);
+                _noticeBack.anchoredPosition = _noticeText.rectTransform.anchoredPosition;
+            }
             foreach (var update in _live) update();
             UiKit.SetReadable(_statusText, App.Settings.highContrast);
             UiKit.SetReadable(_noticeText, App.Settings.highContrast);
@@ -356,16 +387,34 @@ namespace MORLA.XR
             Vector3 forward = Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up);
             if (forward.sqrMagnitude < 0.01f) forward = Vector3.forward; forward.Normalize();
             transform.SetPositionAndRotation(cam.transform.position + forward * 1.2f + Vector3.down * 0.08f, Quaternion.LookRotation(forward, Vector3.up));
-            if (!_placed && App.Settings.hasWindowPose)
+            if (!_placed && App.Settings.hasWindowPose && Reachable(App.Settings.windowPosition, cam.transform.position))
             {
-                // Restore only if the saved pose is still comfortably near the current head.
-                if (Vector3.Distance(App.Settings.windowPosition, cam.transform.position) < 2.5f)
-                    transform.SetPositionAndRotation(App.Settings.windowPosition, App.Settings.windowRotation);
+                // Restore only if the saved pose is still within reach of the current head.
+                transform.SetPositionAndRotation(App.Settings.windowPosition, App.Settings.windowRotation);
             }
             if (Canvas != null) Canvas.worldCamera = cam;
         }
+        // The eye anchor sits at the tracking-space origin until XR applies the first pose
+        // (floor level in this scene), so placing on frame 1 drops the workspace at the user's feet.
+        private bool HeadPoseReady()
+        {
+            if (App.Status.sources["head"].Fresh(QuestPacketEnvelope.MonotonicUs())) return true;
+            var cam = Camera.main; if (cam == null) return false;
+            Transform anchor = cam.transform.parent;
+            Vector3 origin = anchor != null ? anchor.position : Vector3.zero;
+            return (cam.transform.position - origin).sqrMagnitude > 0.04f;
+        }
+        // A pose is usable only when it is within reach and not far below eye level.
+        private static bool Reachable(Vector3 workspace, Vector3 eyes)
+        {
+            var offset = workspace - eyes;
+            return offset.magnitude <= 2.5f && offset.y >= -1f;
+        }
         private void SavePose()
         {
+            var cam = Camera.main;
+            // Never persist a pose the user cannot reach (for example before the head pose is valid).
+            if (cam != null && !Reachable(transform.position, cam.transform.position)) return;
             App.Settings.hasWindowPose = true; App.Settings.windowPosition = transform.position;
             App.Settings.windowRotation = transform.rotation; App.SaveSettings();
         }
