@@ -105,5 +105,18 @@ position = anchor - rotation * (_grabLocal * scale);   // _grabLocal 是画布�
 ## 验证
 
 - 静态编译（Unity csc + Unity/Meta 程序集，editor 与 android 两套 define）：**0 错误**（§9 改完后又跑了一遍，同样 0 错误）。harness 在 `C:\Users\njk\AppData\Local\Temp\morla_check\compile.sh`（临时目录，不入库）。
-- **未在 Unity 真实编译、未重建 APK、未真机验收**。设备上装的 1.1.0 / versionCode 8 不含本改动。
-- 需要真机确认的点：手捏合抓取时的顺滑度（射线起点为捏合点，`_grabOffset` 约 0.7 m）、0.45 m 近端是否会糊脸、2.4 m 远端放大后是否遮挡环境、状态栏轻点/拖动的误触率。
+- **静态编译不等于 Unity 真实编译**：本轮所有改动都没有在 Unity Editor 里构建过，也没有在任何设备上验收过这套最终源码。
+- **仓库里的 APK 与源码不完全同步**：工作副本里 15:24 那次构建（`MORLA-XR.apk`，101,836,358 字节，`com.loopkok.morlaxr` / 1.1.0 / versionCode 8）经 `global-metadata.dat` 核对**包含** `WorkspaceGrab`、`FaceHead`、"默认等视角"等 §7–§9 的符号与文案（同一文件里 `FaceUser` 出现 0 次），说明它是 §9 源码的构建；但它**不含**最后那行 `scroll.inertia = false`（源码在构建之后才改）。要用完整修正，请在 Unity 里重新 Build。
+- 需要真机确认的点：手捏合抓取时的顺滑度（射线起点为捏合点）、0.45 m 近端是否会糊脸、2.4 m 远端放大后是否遮挡环境、状态栏轻点/拖动的误触率、`DepthGain = 2` 是否够用、列表拖动关掉惯性后手感。
+
+## 提交清单（4a9a820 之后）
+
+| SHA | 主题 | 主要文件 |
+|---|---|---|
+| `db30744` | feat(workspace): 工作区可 3D 抓取拖动，远近等视角缩放 | `WorkspaceWindowDrag`、`WorkspacePointer`（`_dragRays`/`TryGetDragRay`）、`WorkspaceUIController`（`ScaleForDistance`/`ApplyDistanceScale`） |
+| `d2dd691` | docs: 记录工作区 3D 拖动与不变量 13 | `CLAUDE.md`、`CHANGELOG.md`、本文 |
+| `45eb42c` | feat(workspace): 手柄按住侧键/长按 ☰ 直接搬运整块工作区 | `WorkspaceGrab.cs`(+`.meta`)、`AppManager`（移除 `Button.Start` 处理、挂组件） |
+| `624a286` | fix(workspace): 修正 3D 拖动的倾斜、卡顿、光标不跟手与"看不出缩放" | §8 的四处修正 + `AppSettings.angularWindowScale` |
+| `9135855` | fix(workspace): 远近方向与 Quest 对齐、深度加速、窗口转向用户、列表滚动调平 | §9 的五处修正 + `UiKit.ScrollPage` 关惯性 |
+
+合计 12 个文件、约 460 行新增（含 135 行的 `WorkspaceGrab` 与 109 行本文）。逐条可单独回退：`9135855`/`624a286` 是行为修正，`45eb42c` 是入口新增，`db30744` 是地基。
