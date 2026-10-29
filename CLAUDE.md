@@ -14,7 +14,7 @@ Meta Quest 3 上的追踪推流 App：手部（21 关键点）/ 手柄（6DoF + 
 - **发送**：每源一个 `TelemetryChannel` 后台线程；只保留最新样本，采样到写入超过 **100 ms** 的丢弃；`@q3m` 在采样/提交时封装，出队不改写时间。
 - **追踪**：`TrackingMode` = Standard / Mixed / FullBody，SHAC 与 IOBT 仍互斥；源有效性与 250 ms 新鲜度由 `TrackingCoordinator` 维护。
 - **发送率 = 显示刷新率**：流内限流器只是 240 Hz 永不触顶的上限；90 Hz 默认开（`refresh90`）。
-- **构建状态**：1.1 源码尚未在 Windows Unity 真实编译、未构建 APK、未做 Quest 真机验收（`Tools/Validation` 的 127 条断言通过，不代表 Unity/Meta 编译通过）。仓库内 `MORLA-XR.apk` 仍是 1.0.0 / versionCode 7，未随 1.1 重建。
+- **构建状态**：1.1 源码已在 Unity 真实编译出 APK，仓库内 `MORLA-XR.apk` 已更新为 **1.1.0 / versionCode 8**（101,813,202 字节；`aapt dump badging` 核对，且包内 `global-metadata.dat` 检到 `MORLA.XR.SessionControl`、"必要视角已隐藏"等本轮符号）。**尚未在 Quest 3 上装这个包做验收**；`Tools/Validation` 的 127 条断言与 Roslyn 静态编译通过也不代表运行时正确。仓库保留 APK 会逼近 GitHub 单文件 100 MiB 上限，后续建议改用 Release 附件。
 - **链路实测（2026-10-29，设备装的是 1.1.0 / versionCode 8）**：USB + `adb reverse`（8000/8001/8765/8080），位姿头/身体 89–91 Hz、手 82–85 Hz、序号连续丢 0、帧间隔中位 11.1–11.4 ms、`@q3sync` RTT 1.0–1.6 ms；语音 25–27 帧/s、峰值 -8~-25 dBFS，faster-whisper 转出通顺中文。**工程与主机都没有 STT**，语音转文字在下游实现。工具见 `Tools/morla_live_probe.py` / `Tools/transcribe_voice.py`。
 
 ## 文件地图（Assets/Scripts/）

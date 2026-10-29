@@ -2,6 +2,12 @@
 
 日期使用Asia/Shanghai。历史版本说明继续保留于README；源码版本、APK产物和设备验收分别记录。
 
+## 2026-10-29 — APK 产物重建（1.1.0 / versionCode 8）
+
+- 仓库内 `MORLA-XR.apk` 由 `1.0.0 / versionCode 7`（93,835,522 字节）更新为新构建 `1.1.0 / versionCode 8`（101,813,202 字节）。`aapt dump badging`：`com.loopkok.morlaxr`、`versionCode='8'`、`versionName='1.1.0'`、minSdk 32 / targetSdk 33。
+- 包里确实带着两轮修复：`global-metadata.dat` 中检到 `MORLA.XR.SessionControl`（「暂停发送」点不动）、"必要视角已隐藏"与"视频接收已关闭，已忽略"（视频门持久关闭）等 1.1 新增符号与文案，旧包这些均为 0 处。
+- **未在 Quest 3 上安装本包验收**；语音/位姿的实测数字仍来自此前安装的同版本号包。97.1 MiB 已逼近 GitHub 单文件 100 MiB 上限，后续建议改用 Release 附件或 LFS。
+
 ## 2026-10-29 — 真机探针 + 「暂停发送」点不动修复
 
 - 新增主机侧验收工具 `Tools/morla_live_probe.py`：8000/8001 多连接监听、认 `@q3m` 外层、每源实测 Hz/序号连续性/帧间隔中位、语音电平与 WAV 落盘、`@q3sync` RTT、3D 骨架 + 波形可视化；`Tools/transcribe_voice.py`（faster-whisper small，模型从 ModelScope 拉）与 `Tools/transcribe_voice.ps1`（Windows SAPI 兜底）把录音转文字，均为验收用、非产品转写。

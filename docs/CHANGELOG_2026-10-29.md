@@ -100,4 +100,8 @@ if (App.Session.Requested) App.Session.Pause(...); else { HideSettings(); App.Se
 
 ### 状态
 
-Roslyn 静态编译 0 错误（editor + Android player 两套 define）。**未在 Unity 真实编译、未重建 APK、未真机复测**；装机器上的 1.1.0 仍带该缺陷，要复测必须重新构建。
+Roslyn 静态编译 0 错误（editor + Android player 两套 define）。写这段时**未在 Unity 真实编译、未重建 APK、未真机复测**；装机器上的 1.1.0 仍带该缺陷，要复测必须重新构建。
+
+### 后续
+
+同日稍晚已构建出新的 APK 并提交：`1.1.0 / versionCode 8`、101,813,202 字节，包内 `global-metadata.dat` 检到 `MORLA.XR.SessionControl`，说明本节的修复已进入产物（详见 [CHANGELOG.md](../CHANGELOG.md) 同日条目）。**仍未在 Quest 3 上装这个包复测**，所以"暂停发送现在能暂停了"依旧只是源码推断，不是验收结论。
