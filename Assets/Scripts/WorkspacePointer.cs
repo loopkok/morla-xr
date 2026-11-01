@@ -63,8 +63,11 @@ namespace MORLA.XR
             {
                 var controller = i == 0 ? OVRInput.Controller.LTouch : OVRInput.Controller.RTouch;
                 bool down = OVRInput.Get(OVRInput.Axis1D.PrimaryIndexTrigger, controller) > 0.2f;
-                if (down || OVRInput.Get(OVRInput.Button.Any, controller) ||
-                    OVRInput.Get(OVRInput.Axis1D.PrimaryHandTrigger, controller) > 0.2f) _released = false;
+                // Only the inputs that can act on the UI block a resume: the index trigger (click,
+                // drag) and ☰ (settings / carry). Grip, stick and the face buttons are sent
+                // downstream in the controller packet, so holding them must not keep the gate
+                // shut — that is why a held grip used to pause sending and never resume.
+                if (down || OVRInput.Get(OVRInput.Button.Start, controller)) _released = false;
                 bool valid = App.Tracking != null && App.Tracking.ControllerActive(i == 0) && App.TrackingEnabled;
                 if (valid && Camera.main != null)
                 {
@@ -141,8 +144,14 @@ namespace MORLA.XR
             // Hovering is not UI intent: the workspace sits in front of the user, so sweeping the
             // ray across a button must not pause sending. Only a press (or a scroll) locks the gate —
             // except on the send button, whose click decides start/pause itself (SessionControl).
+            // A press only counts on a real control, and the stick only counts (and only scrolls)
+            // while the ray is over a list: otherwise pressing the trigger or resting a deflected
+            // stick on the panel paused sending for nothing.
+            bool scrollable = hit != null && hit.GetComponentInParent<ScrollRect>() != null;
+            bool scrolling = scrollable && Mathf.Abs(scroll) > 0.15f;
             if (hit != null && hit.GetComponentInParent<SessionControl>() == null &&
-                (down && !pointer.down || Mathf.Abs(scroll) > 0.5f)) App.Session.EnterUiInteraction();
+                ((down && !pointer.down && IsInteractive(hit)) || (Mathf.Abs(scroll) > 0.5f && scrollable)))
+                App.Session.EnterUiInteraction();
             if (hit != pointer.hover)
             {
                 if (pointer.hover != null) ExecuteEvents.ExecuteHierarchy(pointer.hover, data, ExecuteEvents.pointerExitHandler);
@@ -167,10 +176,14 @@ namespace MORLA.XR
                 if (data.dragging) ExecuteEvents.Execute(data.pointerDrag, data, ExecuteEvents.dragHandler);
             }
             if (!down && pointer.down) Release(pointer, true);
-            if (hit != null && Mathf.Abs(scroll) > 0.15f)
+            if (scrolling)
             { data.scrollDelta = new Vector2(0, scroll * Time.unscaledDeltaTime * 500); ExecuteEvents.ExecuteHierarchy(hit, data, ExecuteEvents.scrollHandler); }
             pointer.down = down; return hit != null;
         }
+        /// <summary>True when something under the hit would actually respond to a click or a drag.</summary>
+        private static bool IsInteractive(GameObject hit) =>
+            hit != null && (ExecuteEvents.GetEventHandler<IPointerClickHandler>(hit) != null ||
+                            ExecuteEvents.GetEventHandler<IDragHandler>(hit) != null);
         /// <summary>Ray from the hand to the canvas plus a cursor at the exact landing point.</summary>
         private void Aim(Pointer pointer, Ray ray, Vector3 worldPoint, bool over, bool down)
         {
