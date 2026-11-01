@@ -35,7 +35,7 @@ WorkspaceUIController.cs   ← 透视工作区：工具栏、六页设置、窗�
 UiKit.cs                   ← 原生 uGUI 控件工厂与统一样式
 WorkspacePointer.cs        ← 手柄射线 / 手部捏合 → uGUI 事件；输入释放门（替代旧 ControllerMenuPointer）
 WorkspaceWindowDrag.cs     ← 工作区 3D 抓取拖动（状态栏/标题栏）：跟手改远近 + 等视角缩放，鼠标退回平面拖动
-WorkspaceGrab.cs           ← 手柄搬运：按住侧键（握把）或长按 ☰ 把整块工作区拿在手上（距离/缩放同上）；☰ 短按仍是开设置
+WorkspaceGrab.cs           ← 手柄搬运：长按 ☰ 把整块工作区拿在手上（距离/缩放同上）；☰ 短按仍是开设置。握把/扳机/摇杆/ABXY 不绑 UI
 WorkspaceIcon.cs / MorlaTextStyle.cs ← 图标绘制 / 字体样式
 MorlaRobotClient.cs        ← MORLA HTTP 8080：状态轮询、pause/start、operation_id 回执关联、不自动重试
 MorlaControlSnapshot.cs    ← /api/v1/state 严格解析与 Confirms 判定
@@ -83,9 +83,11 @@ Tools/transcribe_voice.ps1           ← Windows SAPI 兜底转写（精度很�
 
     **远近大小两种口径**（`AppSettings.angularWindowScale`，设置页「拖远后的大小」）：默认 **true = 等视角**（Quest 3 的手感：手往远处推，界面离开你并**放大**；手收回来，界面靠近并**缩小**），缩放 ∝ 距眼距离（基准 `PlaceDistance=1.2 m` / `BaseCanvasScale=0.0009`，系数夹 0.5–2.0）；false = 固定物理尺寸，推远自然变小。两种模式都要按缩放后的抓取点反算位置（`anchor − rotation × (grabLocal × scale)`），否则缩放时抓取点会从光标下滑走。`Recenter`、恢复保存位姿之后都要 `ApplyDistanceScale`。
 
-    **抓取入口互斥**：`WorkspaceWindowDrag`（射线 + 扳机，状态栏/标题栏）与 `WorkspaceGrab`（侧键/☰ 搬运）不得同时写位姿——`WorkspaceGrab.Carrying` 且 `WorkspacePointer.IsDragging` 双向互斥，否则面板每帧被两边抢着摆，表现为抖动。状态栏点击仍打开概览页（拖过 8 px 阈值 uGUI 自动取消 click）。
+    **抓取入口互斥**：`WorkspaceWindowDrag`（射线 + 扳机，状态栏/标题栏）与 `WorkspaceGrab`（☰ 搬运）不得同时写位姿——`WorkspaceGrab.Carrying` 且 `WorkspacePointer.IsDragging` 双向互斥，否则面板每帧被两边抢着摆，表现为抖动。状态栏点击仍打开概览页（拖过 8 px 阈值 uGUI 自动取消 click）。
 
-    **手柄搬运**：`WorkspaceGrab` 让**按住侧键（握把，任意一只手）**或**长按 ☰ 0.45 s** 把整块工作区拿在手上（距离同样夹 0.45–2.4 m、`DepthGain` 放大、`FaceHead` 朝向、按 `angularWindowScale` 缩放）。☰ 归它管：**短按仍是开/关设置**，长按改成搬运并吞掉那次点击——所以 `AppManager.Update` 里不要再单独处理 `Button.Start`，否则一次按键会既开设置又抢搬运。只允许"该侧当前生效输入"的手柄搬运（`Tracking.ControllerActive`），桌上的手柄不会动面板。
+    **手柄搬运只用 ☰**：`WorkspaceGrab` 让**长按 ☰ 0.45 s** 把整块工作区拿在手上（距离同样夹 0.45–2.4 m、`DepthGain` 放大、`FaceHead` 朝向、按 `angularWindowScale` 缩放）。☰ 归它管：**短按仍是开/关设置**，长按改成搬运并吞掉那次点击——所以 `AppManager.Update` 里不要再单独处理 `Button.Start`，否则一次按键会既开设置又抢搬运。只允许左手柄搬运（`Tracking.ControllerActive(false)`），桌上的手柄不会动面板。
+
+    **不要把下游输入绑到 UI 上**：`trigger`、`grip`、`stickX/Y`、`mask`（含 ABXY、摇杆按下、Menu、握把点击）都随手柄位姿行发给下游，用户会拿它们操控机器人。握把**曾经**是搬运键，结果一按就 `EnterUiInteraction()` 停发；而握把一直握着又让 `WorkspacePointer.InputsReleased()` 永远为 false，发送再也起不来（2026-11-01 真机反馈）。现在的规矩：搬运只用 ☰；`InputsReleased()` 只认**扳机**与 **☰**（真正能操作 UI 的两个输入）；摇杆只有在射线落在 `ScrollRect` 上时才算滚动并暂停；扳机只有落在**可交互控件**（`IsInteractive`：有 `IPointerClickHandler` 或 `IDragHandler` 的祖先）上才暂停。**扳机仍算"未释放"是有意的**（用户 2026-11-01 确认保持）：一直按着扳机当下游输入时，要先松开那一手才能恢复发送。
 
     **列表滚动：拖动 1:1、不要惯性；摇杆按 `unscaledDeltaTime` 给速度**。`UiKit.ScrollPage` 关掉 `ScrollRect.inertia`：射线拖动本来就 1:1 跟手，松手那帧的 `m_Velocity` 一旦被带入默认 `decelerationRate=0.135` 的滑行，列表会"飞"出去（真机反馈"点击上下滑动速度过快"）。摇杆走 `PointerEventData.scrollDelta`，`ScrollRect` 把 `scrollSensitivity` 当**每格滚动量**，所以必须乘帧时间再给一个够大的系数（当前 `× Time.unscaledDeltaTime × 500`），按帧累加才不会变成"太慢"。`pressEventCamera` / `enterEventCamera` 是只读的，靠 `GraphicRaycaster.Raycast` 填的 `module.eventCamera` 自动得到画布相机——那里不用也不许赋值。
 
