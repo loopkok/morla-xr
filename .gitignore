@@ -70,5 +70,6 @@ desktop.ini
 # ==================== 主机侧探针运行产物 ====================
 # morla_live_probe.py 的滚动日志与录音（每次真机验收都会重写，不进版本库）
 Tools/live_probe.log
+Tools/pose_compare_*.csv
 Tools/voice_capture.wav
 Tools/voice_capture.wav.tmp
