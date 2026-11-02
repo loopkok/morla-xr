@@ -36,6 +36,10 @@ namespace MORLA.XR
         /// <summary>True while any pointer is carrying a uGUI drag (see WorkspaceGrab, which must not start).</summary>
         public static bool IsDragging => _dragging;
         public static bool TryGetDragRay(int pointerId, out Ray ray) => _dragRays.TryGetValue(pointerId, out ray);
+        /// <summary>手部是否真的在追踪（新鲜），用于"一侧只画一根射线"的归属。</summary>
+        private static bool HandTracked(int index) =>
+            AppManager.Instance != null && AppManager.Instance.Tracking != null &&
+            AppManager.Instance.Tracking.HandTracked(index == 0 ? HandLandmarkStreamer.HandSide.Left : HandLandmarkStreamer.HandSide.Right);
         private void Start()
         {
             _landmarks = FindObjectsByType<HandLandmarkStreamer>(FindObjectsSortMode.None);
@@ -68,7 +72,13 @@ namespace MORLA.XR
                 // downstream in the controller packet, so holding them must not keep the gate
                 // shut — that is why a held grip used to pause sending and never resume.
                 if (down || OVRInput.Get(OVRInput.Button.Start, controller)) _released = false;
-                bool valid = App.Tracking != null && App.Tracking.ControllerActive(i == 0) && App.TrackingEnabled;
+                // One ray per side, hands first: a tracked hand owns its side's pointer (pinch to
+                // click), and only when no hand is up does the controller draw a ray. The data
+                // pipeline's ControllerActive is a different question (a controller can be "in hand"
+                // while the hand tracker still sees the hand, and then the controller must win the
+                // stream) — do not reuse it here, or the hand pointer disappears from the wrist.
+                bool valid = App.Tracking != null && App.Tracking.ControllerActive(i == 0) &&
+                             App.TrackingEnabled && !HandTracked(i);
                 if (valid && Camera.main != null)
                 {
                     var local = new OVRPose { position = OVRInput.GetLocalControllerPosition(controller), orientation = OVRInput.GetLocalControllerRotation(controller) };
@@ -98,15 +108,12 @@ namespace MORLA.XR
             // unlike OVRHand.PointerPose, whose root is unparented in this scene.
             bool valid = App.TrackingEnabled && hand.IsTrackedDataValid && hand.IsPointerPoseValid && hand.GetPointerPose(out pose);
             if (!valid) { Clear(pointer); return false; }
-            // Meta's system hand ray pivots at the pinch point between thumb and index tips. Using
-            // the raw pointer pose (near the wrist) makes our ray start far below the system one.
+            // Quest 系统的手部射线是"从掌心出来、跟着手的朝向"，捏合只是用来点击（射线变蓝）。
+            // 所以起点取掌心关节（拿不到时退回 pointer pose），方向取 pointer pose 的前向——
+            // 不要用单根食指的朝向：那样只动食指射线就跑，反而点不准（2026-11-02 真机反馈）。
             Vector3 origin = pose.position;
-            if (hand.GetJointPose(HandJointId.HandThumbTip, out Pose thumb) &&
-                hand.GetJointPose(HandJointId.HandIndexTip, out Pose index))
-            {
-                Vector3 pinch = (thumb.position + index.position) * 0.5f;
-                if ((pinch - origin).sqrMagnitude < 0.09f) origin = pinch;
-            }
+            if (hand.GetJointPose(HandJointId.HandPalm, out Pose palm) &&
+                (palm.position - origin).sqrMagnitude < 0.09f) origin = palm.position;
             return Process(pointer, new Ray(origin, pose.rotation * Vector3.forward), down, 0);
         }
         private static HandLandmarkStreamer Landmark(HandLandmarkStreamer.HandSide side)
@@ -190,6 +197,8 @@ namespace MORLA.XR
             if (pointer.line != null)
             {
                 pointer.line.enabled = true;
+                // Quest 的手部射线平时是白的，捏合时变蓝（和光标点同一个提示）。
+                if (pointer.line.material != null) pointer.line.material.color = down ? UiKit.Blue : Color.white;
                 float gap = Mathf.Min(0.05f, Mathf.Max(0.005f, (worldPoint - ray.origin).magnitude * 0.08f));
                 pointer.line.SetPosition(0, ray.origin + ray.direction * gap);
                 pointer.line.SetPosition(1, worldPoint);
