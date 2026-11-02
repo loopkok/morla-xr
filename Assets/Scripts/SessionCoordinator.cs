@@ -37,6 +37,20 @@ namespace MORLA.XR
             _canSend = false; Requested = false; _wasSending = false; Generation++; _voiceRequested = false; _uiLocked = true;
             var app = AppManager.Instance; app.CloseTelemetry(); app.Status.telemetry = TelemetryState.Paused; app.Status.error = ""; app.Notify(reason);
             app.Robot?.PauseIfFollowing();
+            // 暂停原因要能在 logcat 里和 [XRDIAG] 对上：adb logcat -s Unity:V | grep -E "XRPAUSE|XRDIAG"
+            Debug.Log("[XRPAUSE] " + reason + " t=" + Time.unscaledTime.ToString("F2") + " " + SourceDigest());
+        }
+        private static string SourceDigest()
+        {
+            long now = QuestPacketEnvelope.MonotonicUs();
+            var text = new System.Text.StringBuilder();
+            foreach (var pair in AppManager.Instance.Status.sources)
+            {
+                var source = pair.Value;
+                text.Append(' ').Append(pair.Key).Append('=').Append(source.source)
+                    .Append(source.Fresh(now) ? "(fresh)" : "(stale " + (now - source.sampledUs) / 1000 + "ms)");
+            }
+            return text.ToString();
         }
         public void Fail(string reason)
         { Pause(reason); var status = AppManager.Instance.Status; status.telemetry = TelemetryState.Faulted; status.error = reason; }

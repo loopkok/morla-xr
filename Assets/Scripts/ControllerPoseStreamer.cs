@@ -29,7 +29,7 @@ public class ControllerPoseStreamer : MonoBehaviour
     private float _timer;
     private string _lastMix = "";
 
-    private readonly StringBuilder _sbPacket = new StringBuilder(256);
+    private readonly StringBuilder _sbFrame = new StringBuilder(512);
     private readonly StringBuilder _sbLog = new StringBuilder(256);
     private readonly StringBuilder _sbHud = new StringBuilder(64);
 
@@ -80,8 +80,12 @@ public class ControllerPoseStreamer : MonoBehaviour
         Vector3 rightPos = Vector3.zero;
         Quaternion leftRot = Quaternion.identity;
         Quaternion rightRot = Quaternion.identity;
+        _sbFrame.Clear();
         bool leftCtrl = sendLeft && TrySendSide("Left", OVRInput.Controller.LTouch, out leftPos, out leftRot);
         bool rightCtrl = sendRight && TrySendSide("Right", OVRInput.Controller.RTouch, out rightPos, out rightRot);
+        // One submission per frame for both sides (see TrySendSide): the shared channel only keeps
+        // the latest message, so per-line submits would let the last line of the frame win.
+        if (_sbFrame.Length > 0) SendData(_sbFrame.ToString().TrimEnd('\n'));
         bool leftHand = sendLeft && !leftCtrl && IsHandTracked(HandLandmarkStreamer.HandSide.Left);
         bool rightHand = sendRight && !rightCtrl && IsHandTracked(HandLandmarkStreamer.HandSide.Right);
 
@@ -155,21 +159,26 @@ public class ControllerPoseStreamer : MonoBehaviour
             localRot = bodyPose.rotation;
         }
 
-        _sbPacket.Clear();
-        _sbPacket.Append(label).Append(" controller:, ");
-        AppendVector3(_sbPacket, localPos);
-        _sbPacket.Append(", ");
-        AppendQuaternion(_sbPacket, localRot);
-        worldPos = localPos;
-        worldRot = localRot;
-        SendData(_sbPacket.ToString());
+        // Both sides share ONE TelemetryChannel and that channel keeps only the latest message
+        // ("latest frame wins"). Submitting four separate messages per frame therefore let the
+        // later ones overwrite the earlier ones: measured 2026-11-02, left pose got through at
+        // 90 Hz while the right pose arrived at 9–20 Hz with 11/46/112/145 ms intervals. The whole
+        // frame is now appended to one message and submitted once, like wrist + landmarks already
+        // do, so a frame lands or is dropped as a unit.
+        _sbFrame.Append(label).Append(" controller:, ");
+        AppendVector3(_sbFrame, localPos);
+        _sbFrame.Append(", ");
+        AppendQuaternion(_sbFrame, localRot);
+        _sbFrame.Append('\n');
 
         // Also stream controller button/thumbstick state on a separate line so
         // downstream can drive grippers / actions from the Touch controller.
         // Format: "{label} buttons:, trigger, grip, stickX, stickY, mask"
         // mask bits: 0=primary(X/A) 1=secondary(Y/B) 2=thumbstick press
         //           3=menu 4=trigger click 5=grip click
-        SendData(BuildButtonsLine(label, controller));
+        _sbFrame.Append(BuildButtonsLine(label, controller)).Append('\n');
+        worldPos = localPos;
+        worldRot = localRot;
         return true;
     }
 

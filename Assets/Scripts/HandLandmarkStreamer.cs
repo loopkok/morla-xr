@@ -29,7 +29,12 @@ public class HandLandmarkStreamer : MonoBehaviour
     private float _timer;
 
     // Public Accessors
-    public IHand Hand => _hand; 
+    public IHand Hand => _hand;
+    /// <summary>
+    /// 最近一次真正收到手部数据的时间（`Time.unscaledTime`）。`IHand.IsTrackedDataValid` 会在手离开
+    /// 视野后继续为 true 一段时间，用它和手柄比"谁在这一侧"会拿一个陈旧的手腕去判，把在手里的手柄踢掉。
+    /// </summary>
+    public float LastUpdateAt { get; private set; }
     public HandSide Side => _handSide;
     
     // Networking
@@ -81,9 +86,18 @@ public class HandLandmarkStreamer : MonoBehaviour
 
     private void OnHandUpdated()
     {
+        LastUpdateAt = Time.unscaledTime;
         var app = AppManager.Instance;
-        if (app != null && app.TrackingEnabled && _hand != null && !AppManager.IsTouchPoseValid(_handSide))
-            app.Status.sources[_handSide == HandSide.Left ? "left" : "right"].Observe("手部", _hand.IsTrackedDataValid && _hand.GetRootPose(out _));
+        // One source per side: when the controller wins there (in hand, or its hand is not tracked),
+        // the wrist/landmarks must stop too — otherwise the downstream gets both and has to guess.
+        bool controllerWins = app != null && app.Tracking != null &&
+                              app.Tracking.ControllerActive(_handSide == HandSide.Left);
+        // 只在真的有效时上报。手一丢就 Observe("手部", false) 会把源立刻判死，绕过
+        // TrackingCoordinator.ObserveSide 的交接宽限（2026-11-02 真机：手→手柄切换必现暂停）。
+        // 失效统一交给 ObserveSide 判定。
+        if (app != null && app.TrackingEnabled && _hand != null && !controllerWins &&
+            _hand.IsTrackedDataValid && _hand.GetRootPose(out _))
+            app.Status.sources[_handSide == HandSide.Left ? "left" : "right"].Observe("手部", true);
         // Sampling above remains active without a network session.
         if (AppManager.Instance == null || !AppManager.Instance.isStreaming)
         {
@@ -96,8 +110,9 @@ public class HandLandmarkStreamer : MonoBehaviour
         if (mode == 1 && _handSide == HandSide.Right) return;
         if (mode == 2 && _handSide == HandSide.Left) return;
 
-        // Controller pose wins on that side so mixed SHAC does not double-publish hand+controller.
-        if (AppManager.IsTouchPoseValid(_handSide))
+        // Controller wins on that side (same rule as TrackingCoordinator.ControllerActive), so the
+        // hand never double-publishes the side a controller owns.
+        if (controllerWins)
         {
             return;
         }
