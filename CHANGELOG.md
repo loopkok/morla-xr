@@ -2,6 +2,18 @@
 
 日期使用Asia/Shanghai。历史版本说明继续保留于README；源码版本、APK产物和设备验收分别记录。
 
+## 2026-11-02 — 手柄 20 Hz 与"左侧识别成手"修复（附对比探针）
+
+- **实测**（新工具 `Tools/morla_pose_compare.py`，8000/TCP）：手阶段两腕 84 Hz、头部 90 Hz；手柄阶段左手柄 52–74 Hz、**右手柄只有 9–20 Hz**，**连接丢包 0**、`变化Hz ≈ Hz` —— 不是网络丢包也不是数据不刷新，是 App 自己跳过发送。
+- **根因一**：`TrackingCoordinator.ControllerActive` 非 Mixed 分支要求 `!HandTracked` —— 手一被追踪就把这一侧判给手，于是"拿着手柄却识别成手"。
+- **根因二**：同一个判据还要求 `OVRInput.GetControllerPositionValid` —— 该值会短暂失效，当帧直接不发；按 trigger 刷新输入后才恢复，正好对应"按一下才好"。
+- **根因三（真正的 20 Hz 元凶）**：`ControllerPoseStreamer` 两侧**共用一个 `TelemetryChannel`**，每帧提交 4 条消息，而该通道只保留最新一条 → 同帧后面的把前面的挤掉。修法：整帧拼成一条消息提交一次。
+- **根因四（拿起手柄必现「等待有效追踪：左侧」）**：① `TrackingCoordinator.ObserveSide` 在"手还在追踪、但这一侧不归手柄"时直接把 `source.valid = false`；② `HandLandmarkStreamer` 手一丢失追踪就 `Observe("手部", false)`，绕过交接宽限。两处都是一帧抖动换来一次永久暂停。
+- **根因五（运行时合成手柄位姿）**：手柄放桌上、人转身，`GetControllerPositionValid` 仍为真且位姿与手腕**完全重合（0.000 m）**且随手动——运行时会用手的位姿合成一个手柄位姿。所以只能看 `GetConnectedControllers()`（桌面 0、在手里 1）。
+- **手部射线对齐 Quest**：起点改为**掌心关节**（`HandPalm`，取不到时退回 pointer pose），方向取手的朝向而不是单根食指（改过一次"食指 metacarpal→tip"，结果只动食指射线就跑、点不准），平时**白色**、捏合时**蓝色**；手柄射线同样白→按扳机变蓝。
+- **修复**：① 非 Mixed 只看 `GetConnectedControllers()` + **0.5 s 宽限**；② `ObserveSide` 手在时不判失效、两边都没有时给 0.5 s 宽限；③ `HandLandmarkStreamer` 只在有效时上报；④ `ControllerPoseStreamer` **整帧一条消息**（修 20 Hz）；⑤ `WorkspacePointer` 指针归属改为**手优先**，一侧只画一根射线；⑥ 新增每秒 `[XRDIAG]` 与暂停 `[XRPAUSE]` 诊断日志（`adb logcat -s Unity:V`）。
+- **真机验证（最终构建）**：手 0.0–7.4 s（两腕各 621 帧）→ 手柄 7.4–24.2 s（左右各 1508 / 1488 帧），**切换处一帧不丢**；全部源间隔中位 11 ms（≈90 Hz）、**零 >100 ms 间隙**；头部与身体 2175 帧完全同步；全程没有「等待有效追踪」。详细过程与三轮真机数据见[手柄频率与识别问题](docs/CHANGELOG_2026-11-02-controller-rate.md)。
+
 ## 2026-11-01 — 手柄输入不再被工作区吃掉（握把/摇杆/ABXY 留给下游）
 
 - **握把不再搬运工作区**：`WorkspaceGrab` 的握把入口整个删掉，搬运只剩 **长按 ☰ 0.45 s**。原因：握把既是下游输入，又是搬运键，一按就 `EnterUiInteraction()` → 发送暂停；而且握着握把时 `WorkspacePointer.InputsReleased()` 恒为 false（原来把 `Button.Any` 和握把都算进"未释放"），发送**永远起不来**。
